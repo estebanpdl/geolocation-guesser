@@ -1,0 +1,107 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-primary: #0a0f1a;
+  --bg-surface: #111827;
+  --bg-elevated: #1a2332;
+  --border-color: #1e293b;
+  --text-primary: #e2e8f0;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --accent-green: #22c55e;
+  --accent-amber: #f59e0b;
+  --accent-red: #ef4444;
+  --accent-blue: #3b82f6;
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-color) transparent;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-tactical-green text-black font-semibold px-6 py-2.5 rounded
+           hover:bg-green-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-secondary {
+    @apply border border-tactical-border text-tactical-muted px-6 py-2.5 rounded
+           hover:border-tactical-green hover:text-tactical-green transition-colors;
+  }
+
+  .card {
+    @apply bg-tactical-surface border border-tactical-border rounded-lg p-4;
+  }
+
+  .input-field {
+    @apply bg-tactical-bg border border-tactical-border rounded px-3 py-2
+           text-slate-200 placeholder-tactical-muted
+           focus:outline-none focus:border-tactical-green focus:ring-1 focus:ring-tactical-green/30
+           transition-colors;
+  }
+
+  .prose-tactical p {
+    @apply mb-2 last:mb-0;
+  }
+  .prose-tactical strong {
+    @apply text-slate-200 font-semibold;
+  }
+  .prose-tactical h1,
+  .prose-tactical h2,
+  .prose-tactical h3,
+  .prose-tactical h4 {
+    @apply text-slate-200 font-semibold mt-3 mb-1 first:mt-0;
+  }
+  .prose-tactical h1 { @apply text-sm; }
+  .prose-tactical h2 { @apply text-xs; }
+  .prose-tactical h3,
+  .prose-tactical h4 { @apply text-xs; }
+  .prose-tactical ul {
+    @apply list-disc list-inside mb-2 space-y-0.5;
+  }
+  .prose-tactical ol {
+    @apply list-decimal list-inside mb-2 space-y-0.5;
+  }
+  .prose-tactical li {
+    @apply text-slate-400;
+  }
+  .prose-tactical code {
+    @apply bg-tactical-bg px-1 py-0.5 rounded text-tactical-green font-mono text-[10px];
+  }
+  .prose-tactical hr {
+    @apply border-tactical-border my-2;
+  }
+}
+
+@keyframes countdown-ping {
+  0% {
+    transform: scale(0.5);
+    opacity: 0;
+  }
+  30% {
+    transform: scale(1.15);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.animate-countdown-ping {
+  animation: countdown-ping 0.5s ease-out forwards;
+}
