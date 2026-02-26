@@ -1,13 +1,12 @@
 'use client';
 
 import { useReducer, useCallback, useRef, useEffect } from 'react';
-import type { GameSession, Coordinate, Hypothesis, Guess, RoundResult } from '@/lib/types';
+import type { GameSession, Coordinate, Guess, RoundResult } from '@/lib/types';
 import { haversineDistance, getAccuracyCategory, calculateScore } from '@/lib/distance';
 
 type GameAction =
   | { type: 'START_SESSION'; playerName: string; totalRounds: number }
   | { type: 'SET_LOCATION'; location: Coordinate }
-  | { type: 'UPDATE_HYPOTHESIS'; hypothesis: Hypothesis }
   | { type: 'SUBMIT_GUESS'; guess: Guess }
   | { type: 'REVEAL_RESULT' }
   | { type: 'NEXT_ROUND' }
@@ -28,7 +27,6 @@ function createInitialState(): GameSession {
     phase: 'idle',
     rounds: [],
     currentLocation: null,
-    currentHypothesis: null,
     currentGuess: null,
     aiUsedCurrentRound: false,
     startedAt: 0,
@@ -66,7 +64,6 @@ function gameReducer(state: GameSession, action: GameAction): GameSession {
         phase: 'playing',
         rounds: [],
         currentLocation: null,
-        currentHypothesis: null,
         currentGuess: null,
         aiUsedCurrentRound: false,
         startedAt: Date.now(),
@@ -75,9 +72,6 @@ function gameReducer(state: GameSession, action: GameAction): GameSession {
 
     case 'SET_LOCATION':
       return { ...state, currentLocation: action.location };
-
-    case 'UPDATE_HYPOTHESIS':
-      return { ...state, currentHypothesis: action.hypothesis };
 
     case 'SUBMIT_GUESS':
       return { ...state, currentGuess: action.guess, phase: 'guessed' };
@@ -92,7 +86,7 @@ function gameReducer(state: GameSession, action: GameAction): GameSession {
         actual: state.currentLocation,
         guess: state.currentGuess.position,
         distanceKm, score, category,
-        hypothesis: state.currentHypothesis,
+        hypothesis: null,
         usedAI: state.aiUsedCurrentRound,
         timestamp: Date.now(),
       };
@@ -105,7 +99,6 @@ function gameReducer(state: GameSession, action: GameAction): GameSession {
         currentRound: state.currentRound + 1,
         phase: 'playing',
         currentLocation: null,
-        currentHypothesis: null,
         currentGuess: null,
         aiUsedCurrentRound: false,
       };
@@ -146,10 +139,6 @@ export function useGameSession() {
     },
     []
   );
-
-  const updateHypothesis = useCallback((hypothesis: Hypothesis) => {
-    dispatch({ type: 'UPDATE_HYPOTHESIS', hypothesis });
-  }, []);
 
   const submitGuess = useCallback((position: Coordinate) => {
     dispatch({ type: 'SUBMIT_GUESS', guess: { position, timestamp: Date.now() } });
@@ -218,7 +207,7 @@ export function useGameSession() {
   }, [session.phase, session.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return {
-    session, startSession, setLocation, updateHypothesis,
+    session, startSession, setLocation,
     submitGuess, revealResult, nextRound, completeSession,
     markAIUsed, retryLocation, totalScore,
   };

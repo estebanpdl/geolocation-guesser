@@ -41,7 +41,6 @@ export interface GameSession {
   phase: GamePhase;
   rounds: RoundResult[];
   currentLocation: Coordinate | null;
-  currentHypothesis: Hypothesis | null;
   currentGuess: Guess | null;
   aiUsedCurrentRound: boolean;
   startedAt: number;

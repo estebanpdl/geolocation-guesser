@@ -35,7 +35,7 @@ export interface SceneAnalysis {
   rawResponse: string;
 }
 
-function parseAnalysis(text: string): SceneAnalysis {
+export function parseAnalysis(text: string): SceneAnalysis {
   const sections: Record<string, string> = {};
   const sectionNames = [
     'Text & Signs',
@@ -82,12 +82,32 @@ function parseAnalysis(text: string): SceneAnalysis {
   };
 }
 
-export async function analyzeScene(lat: number, lng: number, heading: number = 0, pitch: number = 0): Promise<SceneAnalysis> {
+export async function analyzeImage(base64Data: string, mimeType: string): Promise<SceneAnalysis> {
   const geminiKey = process.env.GOOGLE_GENERATIVE_AI_KEY;
   if (!geminiKey) {
     throw new Error('GOOGLE_GENERATIVE_AI_KEY is not set');
   }
 
+  const genAI = new GoogleGenerativeAI(geminiKey);
+  const model = genAI.getGenerativeModel({ model: 'gemini-flash-lite-latest' });
+
+  const result = await model.generateContent([
+    ANALYSIS_PROMPT,
+    {
+      inlineData: {
+        data: base64Data,
+        mimeType,
+      },
+    },
+  ]);
+
+  const response = result.response;
+  const text = response.text();
+
+  return parseAnalysis(text);
+}
+
+export async function analyzeScene(lat: number, lng: number, heading: number = 0, pitch: number = 0): Promise<SceneAnalysis> {
   const mapsKey = process.env.GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
   if (!mapsKey) {
     throw new Error('Google Maps API key is not set. Add GOOGLE_MAPS_API_KEY to .env.local');
@@ -127,22 +147,6 @@ export async function analyzeScene(lat: number, lng: number, heading: number = 0
   }
 
   // Step 3: Send to Gemini
-  const genAI = new GoogleGenerativeAI(geminiKey);
-  const model = genAI.getGenerativeModel({ model: 'gemini-flash-lite-latest' });
-
-  const result = await model.generateContent([
-    ANALYSIS_PROMPT,
-    {
-      inlineData: {
-        data: base64Image,
-        mimeType: contentType,
-      },
-    },
-  ]);
-
-  const response = result.response;
-  const text = response.text();
-
-  return parseAnalysis(text);
+  return analyzeImage(base64Image, contentType);
 }
 

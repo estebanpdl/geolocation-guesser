@@ -6,7 +6,6 @@ import { useGameSession } from '@/hooks/useGameSession';
 import GameLayout from '@/components/GameLayout';
 import StreetViewCanvas from '@/components/StreetViewCanvas';
 import GuessMap from '@/components/GuessMap';
-import HypothesisPanel from '@/components/HypothesisPanel';
 import AIAssistantPanel from '@/components/AIAssistantPanel';
 import RoundResult from '@/components/RoundResult';
 import SessionSummary from '@/components/SessionSummary';
@@ -19,7 +18,6 @@ function GameContent() {
   const {
     session,
     startSession,
-    updateHypothesis,
     submitGuess,
     revealResult,
     nextRound,
@@ -29,7 +27,6 @@ function GameContent() {
     totalScore,
   } = useGameSession();
   const [hasGuessed, setHasGuessed] = useState(false);
-  const [sidebarTab, setSidebarTab] = useState<'hypothesis' | 'ai'>('hypothesis');
   const [aiUsedThisRound, setAiUsedThisRound] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
 
@@ -45,7 +42,6 @@ function GameContent() {
     if (session.phase === 'playing') {
       setHasGuessed(false);
       setAiUsedThisRound(false);
-      setSidebarTab('hypothesis');
     }
   }, [session.phase, session.currentRound]);
 
@@ -201,32 +197,6 @@ function GameContent() {
       }
       sidebar={
         <div className="h-full flex flex-col">
-          {/* Sidebar tabs (only when playing/guessed) */}
-          {(isPlaying || isGuessed) && (
-            <div className="flex border-b border-tactical-border shrink-0">
-              <button
-                onClick={() => setSidebarTab('hypothesis')}
-                className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${
-                  sidebarTab === 'hypothesis'
-                    ? 'text-tactical-amber border-b-2 border-tactical-amber'
-                    : 'text-tactical-muted hover:text-slate-300'
-                }`}
-              >
-                Hypothesis
-              </button>
-              <button
-                onClick={() => setSidebarTab('ai')}
-                className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${
-                  sidebarTab === 'ai'
-                    ? 'text-tactical-blue border-b-2 border-tactical-blue'
-                    : 'text-tactical-muted hover:text-slate-300'
-                }`}
-              >
-                AI Analysis
-              </button>
-            </div>
-          )}
-
           {/* Sidebar content */}
           <div className="flex-1 overflow-y-auto">
             {isRevealed && lastRound ? (
@@ -238,29 +208,16 @@ function GameContent() {
               />
             ) : isGuessed ? (
               <>
-                {sidebarTab === 'hypothesis' ? (
-                  <HypothesisPanel
-                    onUpdate={updateHypothesis}
-                    roundNumber={session.currentRound}
-                    disabled
-                  />
-                ) : (
-                  <AIAssistantPanel
-                    location={session.currentLocation}
-                    disabled
-                  />
-                )}
+                <AIAssistantPanel
+                  location={session.currentLocation}
+                  disabled
+                />
                 <div className="p-4 pt-0">
                   <div className="text-xs text-tactical-muted text-center">
                     Confirm your guess to see results
                   </div>
                 </div>
               </>
-            ) : sidebarTab === 'hypothesis' ? (
-              <HypothesisPanel
-                onUpdate={updateHypothesis}
-                roundNumber={session.currentRound}
-              />
             ) : (
               <AIAssistantPanel
                 location={session.currentLocation}

@@ -89,6 +89,23 @@ export default function HomePage() {
           </button>
         </div>
 
+        {/* Divider + Analyze link */}
+        <div className="flex items-center gap-3">
+          <div className="flex-1 h-px bg-tactical-border" />
+          <span className="text-[10px] text-tactical-muted uppercase tracking-wider">or</span>
+          <div className="flex-1 h-px bg-tactical-border" />
+        </div>
+
+        <Link
+          href="/analyze"
+          className="block card hover:border-tactical-blue/30 transition-colors text-center space-y-1.5"
+        >
+          <div className="text-sm font-medium text-tactical-blue">Analyze a Photo</div>
+          <p className="text-xs text-tactical-muted">
+            Upload any image for OSINT geolocation analysis
+          </p>
+        </Link>
+
         {/* Recent sessions */}
         {recentSessions.length > 0 && (
           <div className="space-y-2">
