@@ -89,7 +89,7 @@ export async function analyzeImage(base64Data: string, mimeType: string): Promis
   }
 
   const genAI = new GoogleGenerativeAI(geminiKey);
-  const model = genAI.getGenerativeModel({ model: 'gemini-flash-lite-latest' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
 
   const result = await model.generateContent([
     ANALYSIS_PROMPT,
