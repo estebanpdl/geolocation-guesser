@@ -1,6 +1,6 @@
 /**
- * Server-side credential store: a JSON file under the server account's
- * per-user configuration directory, outside the repository and served assets.
+ * Server-side credential store: a JSON file in the server account's home
+ * directory, outside the repository and served assets.
  *
  * This module uses only Node built-ins and relative imports so the operator
  * `auth` command can load it directly with Node's type stripping.
@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 export const STORE_PATH_ENV = 'GEOLOCATION_GUESSER_CREDENTIALS_FILE';
-const APP_DIRECTORY = 'geolocation-guesser';
+const APP_DIRECTORY = '.geolocation-guesser';
 const STORE_FILE = 'credentials.json';
 const STORE_VERSION = 1;
 const MAX_VALUE_LENGTH = 512;
@@ -50,36 +50,28 @@ type Env = Record<string, string | undefined>;
 /**
  * Resolves the store location for the current server account:
  * - an absolute path in GEOLOCATION_GUESSER_CREDENTIALS_FILE, if set;
- * - Windows: %LOCALAPPDATA%\geolocation-guesser\credentials.json;
- * - elsewhere: $XDG_CONFIG_HOME/geolocation-guesser/credentials.json,
- *   falling back to ~/.config/geolocation-guesser/credentials.json.
+ * - otherwise ~/.geolocation-guesser/credentials.json in the account's home
+ *   directory, on every platform.
  */
 export function resolveStorePath(env: Env = process.env, platform: NodeJS.Platform = process.platform): string {
+  const pathFor = platform === 'win32' ? path.win32 : path.posix;
   const override = env[STORE_PATH_ENV]?.trim();
   if (override) {
-    if (!isAbsoluteFor(platform, override)) {
+    if (!pathFor.isAbsolute(override)) {
       throw new CredentialStoreError(`${STORE_PATH_ENV} must be an absolute path.`);
     }
     return override;
   }
 
-  if (platform === 'win32') {
-    const localAppData = env.LOCALAPPDATA?.trim();
-    const base = localAppData && path.win32.isAbsolute(localAppData)
-      ? localAppData
-      : path.win32.join(homeDirectory(env, platform), 'AppData', 'Local');
-    return path.win32.join(base, APP_DIRECTORY, STORE_FILE);
+  // A relative home would place the store under the working directory, possibly inside the repository.
+  const home = homeDirectory(env, platform);
+  if (!pathFor.isAbsolute(home)) {
+    throw new CredentialStoreError(`The home directory is not an absolute path; set ${STORE_PATH_ENV}.`);
   }
-
-  const xdg = env.XDG_CONFIG_HOME?.trim();
-  const base = xdg && path.posix.isAbsolute(xdg) ? xdg : path.posix.join(homeDirectory(env, platform), '.config');
-  return path.posix.join(base, APP_DIRECTORY, STORE_FILE);
+  return pathFor.join(home, APP_DIRECTORY, STORE_FILE);
 }
 
-function isAbsoluteFor(platform: NodeJS.Platform, value: string): boolean {
-  return platform === 'win32' ? path.win32.isAbsolute(value) : path.posix.isAbsolute(value);
-}
-
+/** The same lookup as os.homedir(), but readable from an injected environment. */
 function homeDirectory(env: Env, platform: NodeJS.Platform): string {
   const fromEnv = platform === 'win32' ? env.USERPROFILE : env.HOME;
   return fromEnv?.trim() || os.homedir();

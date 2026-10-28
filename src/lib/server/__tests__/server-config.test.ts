@@ -17,29 +17,53 @@ function store(data: Partial<StoreData> = {}, status: 'ok' | 'missing' | 'invali
 }
 
 describe('resolveStorePath', () => {
-  it('uses LOCALAPPDATA on Windows', () => {
-    expect(resolveStorePath({ LOCALAPPDATA: 'C:\\Users\\op\\AppData\\Local' }, 'win32')).toBe(
-      'C:\\Users\\op\\AppData\\Local\\geolocation-guesser\\credentials.json'
-    );
+  it('uses .geolocation-guesser in the home directory on Windows', () => {
     expect(resolveStorePath({ USERPROFILE: 'C:\\Users\\op' }, 'win32')).toBe(
-      'C:\\Users\\op\\AppData\\Local\\geolocation-guesser\\credentials.json'
+      'C:\\Users\\op\\.geolocation-guesser\\credentials.json'
+    );
+    expect(
+      resolveStorePath({ USERPROFILE: 'C:\\Users\\op', LOCALAPPDATA: 'C:\\Users\\op\\AppData\\Local' }, 'win32')
+    ).toBe('C:\\Users\\op\\.geolocation-guesser\\credentials.json');
+  });
+
+  it('uses .geolocation-guesser in the home directory elsewhere', () => {
+    expect(resolveStorePath({ HOME: '/home/op' }, 'linux')).toBe('/home/op/.geolocation-guesser/credentials.json');
+    expect(resolveStorePath({ HOME: '/Users/op', XDG_CONFIG_HOME: '/srv/config' }, 'darwin')).toBe(
+      '/Users/op/.geolocation-guesser/credentials.json'
     );
   });
 
-  it('uses XDG_CONFIG_HOME, then ~/.config, elsewhere', () => {
-    expect(resolveStorePath({ XDG_CONFIG_HOME: '/srv/config', HOME: '/home/op' }, 'linux')).toBe(
-      '/srv/config/geolocation-guesser/credentials.json'
-    );
-    expect(resolveStorePath({ XDG_CONFIG_HOME: 'relative', HOME: '/home/op' }, 'linux')).toBe(
-      '/home/op/.config/geolocation-guesser/credentials.json'
-    );
+  it('defaults to the current home directory', () => {
+    // Test setup points HOME and USERPROFILE at scratch, so this is a synthetic home.
+    const home = process.platform === 'win32' ? process.env.USERPROFILE! : process.env.HOME!;
+    expect(home).toContain('geolocation-guesser-tests-');
+    expect(resolveStorePath()).toBe(path.join(home, '.geolocation-guesser', 'credentials.json'));
+  });
+
+  it('refuses a relative home directory', () => {
+    expect(() => resolveStorePath({ HOME: 'relative/home' }, 'linux')).toThrow(/home directory/);
+    expect(() => resolveStorePath({ USERPROFILE: 'Users\\op' }, 'win32')).toThrow(/home directory/);
   });
 
   it('accepts only an absolute override path', () => {
-    expect(resolveStorePath({ GEOLOCATION_GUESSER_CREDENTIALS_FILE: '/etc/gg/credentials.json' }, 'linux')).toBe(
-      '/etc/gg/credentials.json'
+    expect(
+      resolveStorePath({ GEOLOCATION_GUESSER_CREDENTIALS_FILE: '/etc/gg/credentials.json', HOME: '/home/op' }, 'linux')
+    ).toBe('/etc/gg/credentials.json');
+    expect(
+      resolveStorePath({ GEOLOCATION_GUESSER_CREDENTIALS_FILE: 'D:\\gg\\credentials.json', USERPROFILE: 'C:\\Users\\op' }, 'win32')
+    ).toBe('D:\\gg\\credentials.json');
+    expect(() => resolveStorePath({ GEOLOCATION_GUESSER_CREDENTIALS_FILE: 'creds.json', HOME: '/home/op' }, 'linux')).toThrow(
+      /absolute/
     );
-    expect(() => resolveStorePath({ GEOLOCATION_GUESSER_CREDENTIALS_FILE: 'creds.json' }, 'linux')).toThrow(/absolute/);
+    expect(() =>
+      resolveStorePath({ GEOLOCATION_GUESSER_CREDENTIALS_FILE: 'gg\\creds.json', USERPROFILE: 'C:\\Users\\op' }, 'win32')
+    ).toThrow(/absolute/);
+  });
+
+  it('treats a blank override as unset', () => {
+    expect(resolveStorePath({ GEOLOCATION_GUESSER_CREDENTIALS_FILE: '  ', HOME: '/home/op' }, 'linux')).toBe(
+      '/home/op/.geolocation-guesser/credentials.json'
+    );
   });
 });
 
@@ -206,6 +230,26 @@ describe('loadServerConfig', () => {
     const updated = await loadServerConfig();
     expect(updated.training.mode).toBe('closed');
     expect(updated.training.accessCode?.value).toBe('SECONDCODE2');
+  });
+
+  it('reads the store from the home directory and writes it there', async () => {
+    const home = await makeScratchDir('home-');
+    vi.stubEnv('HOME', home);
+    vi.stubEnv('USERPROFILE', home);
+    const storePath = path.join(home, '.geolocation-guesser', 'credentials.json');
+
+    const missing = await loadServerConfig();
+    expect(missing.storePath).toBe(storePath);
+    expect(missing.storeStatus).toBe('missing');
+
+    await writeStore(storePath, { ...emptyStore(), training: { mode: 'closed' } });
+    const saved = await loadServerConfig();
+    expect(saved.storeStatus).toBe('ok');
+    expect(saved.training.mode).toBe('closed');
+    if (process.platform !== 'win32') {
+      expect((await fs.stat(path.dirname(storePath))).mode & 0o777).toBe(0o700);
+      expect((await fs.stat(storePath)).mode & 0o777).toBe(0o600);
+    }
   });
 
   it('closes training when the store override path is relative', async () => {
