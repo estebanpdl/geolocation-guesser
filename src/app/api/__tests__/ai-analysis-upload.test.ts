@@ -1,9 +1,12 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { POST } from '../ai-analysis-upload/route';
+import { parseAnalysisResponse } from '@/lib/analysis/contract';
 import { resetTrainingAccessState } from '@/lib/server/training-access';
 import {
   geminiBlocked,
+  geminiKeyOf,
+  geminiStatus,
   geminiText,
   installFakeFetch,
   isGemini,
@@ -17,6 +20,10 @@ import {
 
 function upload(body: unknown) {
   return POST(jsonRequest('/api/ai-analysis-upload', body));
+}
+
+function photo() {
+  return { image: toBase64(syntheticJpeg()), mimeType: 'image/jpeg' };
 }
 
 beforeEach(() => {
@@ -80,6 +87,50 @@ describe('POST /api/ai-analysis-upload', () => {
     );
     expect(response.status).toBe(401);
     expect(calls).toHaveLength(0);
+  });
+
+  it('returns the shared response shape without the raw model text', async () => {
+    installFakeFetch(geminiText());
+    const body = await (await upload(photo())).json();
+    expect(body).toMatchObject({ selection: { provider: 'gemini', model: 'gemini-flash' }, credentialSource: 'operator' });
+    expect(body).not.toHaveProperty('rawResponse');
+    expect(parseAnalysisResponse(body)).not.toBeNull();
+  });
+
+  it('reports malformed output as an error', async () => {
+    installFakeFetch(geminiText('not json at all'));
+    const response = await upload(photo());
+    expect([response.status, (await response.json()).code]).toEqual([502, 'invalid_output']);
+  });
+
+  it.each([
+    ['an unknown model', { selection: { provider: 'gemini', model: 'stale-entry' } }, 400, 'unknown_model'],
+    ['a disabled provider', { selection: { provider: 'openai', model: 'any' } }, 503, 'provider_unavailable'],
+    ['a malformed key', { participantKey: { provider: 'gemini', apiKey: 'a b' } }, 400, 'invalid_participant_key'],
+    ['a mismatched key', { participantKey: { provider: 'openai', apiKey: SYNTHETIC.PARTICIPANT_OPENAI_KEY } }, 400, 'participant_key_mismatch'],
+  ])('rejects %s without external calls', async (_label, extra, status, code) => {
+    const { calls } = installFakeFetch(geminiText());
+    const response = await upload({ ...photo(), ...extra });
+    expect([response.status, (await response.json()).code]).toEqual([status, code]);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('uses a participant key without a server key, and does not fall back when it is rejected', async () => {
+    vi.stubEnv('GOOGLE_GENERATIVE_AI_KEY', '');
+    const withKey = { ...photo(), participantKey: { provider: 'gemini', apiKey: SYNTHETIC.PARTICIPANT_GEMINI_KEY_A } };
+
+    const ok = installFakeFetch(geminiText());
+    const accepted = await upload(withKey);
+    expect([accepted.status, (await accepted.json()).credentialSource]).toEqual([200, 'participant']);
+    expect(geminiKeyOf(ok.calls[0])).toBe(SYNTHETIC.PARTICIPANT_GEMINI_KEY_A);
+
+    vi.stubEnv('GOOGLE_GENERATIVE_AI_KEY', SYNTHETIC.GEMINI_KEY);
+    const rejected = installFakeFetch(geminiStatus(403));
+    const response = await upload(withKey);
+    const text = await response.text();
+    expect([response.status, JSON.parse(text).code]).toEqual([401, 'participant_key_rejected']);
+    expect(rejected.calls.map(geminiKeyOf)).toEqual([SYNTHETIC.PARTICIPANT_GEMINI_KEY_A]);
+    expect(text).not.toContain(SYNTHETIC.PARTICIPANT_GEMINI_KEY_A);
   });
 
   it('blocks photo analysis while training is closed', async () => {

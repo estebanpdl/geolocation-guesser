@@ -2,26 +2,22 @@
 
 import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { ANALYSIS_FIELDS, type Analysis, type AnalysisField } from '@/lib/analysis/contract';
 
-export interface AnalysisResult {
-  textAndSigns: string;
-  landmarksAndBuildings: string;
-  roadAndInfrastructure: string;
-  vehiclesAndPlates: string;
-  vegetationAndTerrain: string;
-  culturalIndicators: string;
-  overallAssessment: string;
-}
+/** The analysis shape shared with the server contract. */
+export type AnalysisResult = Analysis;
 
-const SECTIONS: { key: keyof AnalysisResult; label: string; icon: string }[] = [
-  { key: 'textAndSigns', label: 'Text & Signs', icon: 'Aa' },
-  { key: 'landmarksAndBuildings', label: 'Landmarks & Buildings', icon: '#' },
-  { key: 'roadAndInfrastructure', label: 'Road & Infrastructure', icon: '=' },
-  { key: 'vehiclesAndPlates', label: 'Vehicles & Plates', icon: '[]' },
-  { key: 'vegetationAndTerrain', label: 'Vegetation & Terrain', icon: '~' },
-  { key: 'culturalIndicators', label: 'Cultural Indicators', icon: '*' },
-  { key: 'overallAssessment', label: 'Overall Assessment', icon: '>' },
-];
+const ICONS: Record<AnalysisField, string> = {
+  textAndSigns: 'Aa',
+  landmarksAndBuildings: '#',
+  roadAndInfrastructure: '=',
+  vehiclesAndPlates: '[]',
+  vegetationAndTerrain: '~',
+  culturalIndicators: '*',
+  overallAssessment: '>',
+};
+
+const SECTIONS = ANALYSIS_FIELDS.map(({ key, label }) => ({ key, label, icon: ICONS[key] }));
 
 interface AnalysisSectionsProps {
   analysis: AnalysisResult | null;

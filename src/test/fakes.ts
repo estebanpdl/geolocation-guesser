@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { NextRequest } from 'next/server';
 import { vi } from 'vitest';
+import type { Analysis } from '@/lib/analysis/contract';
+import type { Catalog, CatalogModel } from '@/lib/server/catalog';
 import type { StoreData } from '@/lib/server/credential-store';
 
 export const SYNTHETIC = {
@@ -11,6 +13,9 @@ export const SYNTHETIC = {
   MAPS_SERVER_KEY: 'synthetic-maps-server-key-0000',
   OPENAI_KEY: 'synthetic-openai-key-0000',
   ACCESS_CODE: 'TEST-CODE-ABCD-2345',
+  PARTICIPANT_GEMINI_KEY_A: 'synthetic-participant-a-gemini-1111',
+  PARTICIPANT_GEMINI_KEY_B: 'synthetic-participant-b-gemini-2222',
+  PARTICIPANT_OPENAI_KEY: 'synthetic-participant-openai-3333',
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -64,7 +69,7 @@ export interface RecordedCall {
   init: RequestInit | undefined;
 }
 
-export type FakeRoute = (url: URL, init: RequestInit | undefined) => Response | Promise<Response> | undefined;
+export type FakeRoute = (url: URL, init: RequestInit | undefined) => Response | Promise<Response | undefined> | undefined;
 
 export function installFakeFetch(...routes: FakeRoute[]) {
   const calls: RecordedCall[] = [];
@@ -92,21 +97,29 @@ export function streetViewStatus(status: number): FakeRoute {
   return (url) => (isStreetView(url) ? new Response('upstream detail that must not leak', { status }) : undefined);
 }
 
-export const SAMPLE_ANALYSIS_TEXT = [
-  '**Text & Signs**: Cyrillic shop sign.',
-  '**Landmarks & Buildings**: Soviet-era apartment blocks.',
-  '**Road & Infrastructure**: Right-hand traffic.',
-  '**Vehicles & License Plates**: White plates.',
-  '**Vegetation & Terrain**: Birch trees, flat land.',
-  '**Cultural Indicators**: No clear indicators.',
-  '**Overall Assessment**: Eastern Europe, low confidence.',
-].join('\n');
+export const SAMPLE_ANALYSIS: Analysis = {
+  textAndSigns: 'Cyrillic shop sign.',
+  landmarksAndBuildings: 'Soviet-era apartment blocks.',
+  roadAndInfrastructure: 'Right-hand traffic.',
+  vehiclesAndPlates: 'White plates.',
+  vegetationAndTerrain: 'Birch trees, flat land.',
+  culturalIndicators: 'No clear indicators.',
+  overallAssessment: 'Eastern Europe, low confidence.',
+};
 
-export function geminiText(text: string = SAMPLE_ANALYSIS_TEXT): FakeRoute {
+export const SAMPLE_ANALYSIS_JSON = JSON.stringify(SAMPLE_ANALYSIS);
+
+/** A Gemini reply whose text is `text` (the sample analysis as JSON by default). */
+export function geminiText(text: string = SAMPLE_ANALYSIS_JSON, finishReason = 'STOP'): FakeRoute {
   return (url) =>
     isGemini(url)
-      ? Response.json({ candidates: [{ content: { role: 'model', parts: [{ text }] }, finishReason: 'STOP', index: 0 }] })
+      ? Response.json({ candidates: [{ content: { role: 'model', parts: [{ text }] }, finishReason, index: 0 }] })
       : undefined;
+}
+
+/** The key a fake Gemini request was sent with. */
+export function geminiKeyOf(call: RecordedCall): string | null {
+  return new Headers(call.init?.headers).get('x-goog-api-key');
 }
 
 export function geminiStatus(status: number): FakeRoute {
@@ -178,3 +191,33 @@ export async function rewriteStore(storePath: string, data: Partial<StoreData>):
   const later = new Date(Date.now() + 5_000);
   await fs.utimes(storePath, later, later);
 }
+
+// ---------------------------------------------------------------------------
+// Catalogs.
+
+export function catalogModel(overrides: Partial<CatalogModel> & Pick<CatalogModel, 'id' | 'provider'>): CatalogModel {
+  return {
+    label: overrides.id,
+    upstreamModel: `upstream-${overrides.id}`,
+    workflows: ['scene', 'photo'],
+    capabilities: { imageInput: true, structuredOutput: true },
+    maxOutputTokens: 1024,
+    default: false,
+    ...overrides,
+  };
+}
+
+/** Two enabled providers with several entries, including ones that must never be listed. */
+export const TWO_PROVIDER_CATALOG: Catalog = {
+  providers: [
+    { id: 'gemini', label: 'Gemini', enabled: true, credentialField: 'geminiApiKey', participantKeys: true },
+    { id: 'openai', label: 'OpenAI', enabled: true, credentialField: 'openaiApiKey', participantKeys: true },
+  ],
+  models: [
+    catalogModel({ id: 'gem-default', provider: 'gemini', default: true }),
+    catalogModel({ id: 'gem-photo', provider: 'gemini', workflows: ['photo'] }),
+    catalogModel({ id: 'gem-text-only', provider: 'gemini', capabilities: { imageInput: false, structuredOutput: true } }),
+    catalogModel({ id: 'oa-default', provider: 'openai', default: true, workflows: ['photo'] }),
+  ],
+  defaultSelection: { provider: 'gemini', model: 'gem-default' },
+};
