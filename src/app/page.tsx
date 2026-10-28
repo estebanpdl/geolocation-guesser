@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import TrainingNavLink from '@/components/TrainingNavLink';
 import { DEFAULTS } from '@/utils/constants';
 import { getSessions } from '@/lib/session-storage';
 import { formatScore, formatDate } from '@/utils/formatters';
@@ -39,6 +40,7 @@ export default function HomePage() {
             OSINT Geolocation Training Platform
           </p>
           <div className="w-16 h-px bg-tactical-green mx-auto mt-4" />
+          <TrainingNavLink className="inline-block pt-2" />
         </div>
 
         {/* Setup form */}

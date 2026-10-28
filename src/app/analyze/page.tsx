@@ -5,8 +5,11 @@ import Link from 'next/link';
 import PhotoDropZone from '@/components/PhotoDropZone';
 import AnalysisSections from '@/components/AnalysisSections';
 import type { AnalysisResult } from '@/components/AnalysisSections';
+import ParticipantKeyField from '@/components/ParticipantKeyField';
 import TrainingAccessLink from '@/components/TrainingAccessLink';
-import { readApiError, TRAINING_SESSION_REQUIRED } from '@/lib/api-client';
+import TrainingNavLink from '@/components/TrainingNavLink';
+import { useAnalysisTarget } from '@/hooks/useAnalysisCatalog';
+import { AnalysisRequestError, requestAnalysis, TRAINING_SESSION_REQUIRED } from '@/lib/api-client';
 
 interface ImageData {
   base64: string;
@@ -21,6 +24,7 @@ export default function AnalyzePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [needsAccess, setNeedsAccess] = useState(false);
+  const { selection, provider } = useAnalysisTarget();
 
   const handleImageSelected = useCallback((base64: string, mimeType: string, fileName: string) => {
     setImageData({ base64, mimeType, fileName });
@@ -44,29 +48,19 @@ export default function AnalyzePage() {
     setNeedsAccess(false);
 
     try {
-      const res = await fetch('/api/ai-analysis-upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          image: imageData.base64,
-          mimeType: imageData.mimeType,
-        }),
-      });
-
-      if (!res.ok) {
-        const { message, code } = await readApiError(res, 'Analysis failed');
-        setNeedsAccess(code === TRAINING_SESSION_REQUIRED);
-        throw new Error(message);
-      }
-
-      const data = await res.json();
-      setAnalysis(data.analysis);
+      const result = await requestAnalysis(
+        '/api/ai-analysis-upload',
+        { image: imageData.base64, mimeType: imageData.mimeType },
+        selection
+      );
+      setAnalysis(result.analysis);
     } catch (err) {
+      setNeedsAccess(err instanceof AnalysisRequestError && err.code === TRAINING_SESSION_REQUIRED);
       setError(err instanceof Error ? err.message : 'Analysis unavailable');
     } finally {
       setLoading(false);
     }
-  }, [imageData, loading]);
+  }, [imageData, loading, selection]);
 
   return (
     <div className="min-h-screen bg-tactical-bg">
@@ -78,6 +72,7 @@ export default function AnalyzePage() {
           </Link>
           <span className="text-tactical-muted">/</span>
           <span className="text-xs text-tactical-muted uppercase tracking-wider">Photo Analysis</span>
+          <TrainingNavLink newTab className="ml-auto" />
         </div>
       </header>
 
@@ -99,6 +94,8 @@ export default function AnalyzePage() {
               currentPreview={previewUrl}
               onClear={handleClear}
             />
+
+            {provider && <ParticipantKeyField provider={provider} disabled={loading} />}
 
             {imageData && !loading && (
               <button
