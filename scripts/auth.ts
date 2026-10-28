@@ -15,6 +15,7 @@ import {
   isStorableValue,
   readStore,
   resolveStorePath,
+  STORE_PATH_ENV,
   writeStore,
   type CredentialField,
   type StoreData,
@@ -65,6 +66,9 @@ Commands:
   training open                 Require the access code for AI analysis
   training close                Block AI analysis for everyone
   training off                  Local use: AI analysis needs no access code
+
+Saved settings live in ~/.geolocation-guesser/credentials.json, or in the absolute path set by
+${STORE_PATH_ENV}.
 
 Environment variables, from this shell or the project's .env files, override saved values:
 ${Object.values(CREDENTIAL_ENV).join(', ')}, ${TRAINING_ENV.MODE}, ${TRAINING_ENV.ACCESS_CODE}.

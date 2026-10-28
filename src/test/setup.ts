@@ -26,8 +26,6 @@ const INHERITED_SETTINGS = [
 
 function isolateEnvironment() {
   for (const name of INHERITED_SETTINGS) delete process.env[name];
-  process.env.LOCALAPPDATA = path.join(TEST_SCRATCH, 'localappdata');
-  process.env.XDG_CONFIG_HOME = path.join(TEST_SCRATCH, 'xdg-config');
   process.env.HOME = path.join(TEST_SCRATCH, 'home');
   process.env.USERPROFILE = process.env.HOME;
 }

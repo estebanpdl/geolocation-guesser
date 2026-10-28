@@ -218,4 +218,30 @@ describe('auth command', () => {
     expect(await runAuth(['training', 'reset'], h.io)).toBe(2);
     expect(await runAuth(['status', 'extra'], h.io)).toBe(2);
   });
+
+  it('defaults to .geolocation-guesser in the home directory', async () => {
+    const h = await harness();
+    const home = await makeScratchDir('home-');
+    const io = { ...h.io, env: { HOME: home, USERPROFILE: home } };
+    const expected = path.join(home, '.geolocation-guesser', 'credentials.json');
+
+    expect(await runAuth(['path'], io)).toBe(0);
+    expect(h.out).toEqual([expected]);
+    expect(await runAuth(['status'], io)).toBe(0);
+    expect(h.out).toContain(`Credential store: ${expected} (not created yet)`);
+    expect(await runAuth(['help'], io)).toBe(0);
+    expect(h.out.at(-1)).toContain('~/.geolocation-guesser/credentials.json');
+  });
+
+  it('refuses a relative store override without falling back', async () => {
+    const h = await harness();
+    const home = await makeScratchDir('home-');
+    const io = { ...h.io, env: { HOME: home, USERPROFILE: home, GEOLOCATION_GUESSER_CREDENTIALS_FILE: 'creds.json' } };
+
+    expect(await runAuth(['path'], io)).toBe(1);
+    expect(await runAuth(['training', 'close'], io)).toBe(1);
+    expect(h.out).toEqual([]);
+    expect(h.err.join('\n')).toContain('must be an absolute path');
+    await expect(fs.stat(path.join(home, '.geolocation-guesser'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
 });
