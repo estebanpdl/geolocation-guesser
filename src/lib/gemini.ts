@@ -1,4 +1,13 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import {
+  GoogleGenerativeAI,
+  GoogleGenerativeAIFetchError,
+  GoogleGenerativeAIResponseError,
+} from '@google/generative-ai';
+import { ApiError } from '@/lib/server/api-error';
+import { abortError } from '@/lib/server/deadline';
+import { ANALYSIS_LIMITS } from '@/lib/server/limits';
+
+export const GEMINI_MODEL = 'gemini-flash-latest';
 
 const ANALYSIS_PROMPT = `You are an expert OSINT geolocation analyst. Analyze this Google Street View location image and provide a structured analysis to help determine where in the world this location might be.
 
@@ -82,71 +91,66 @@ export function parseAnalysis(text: string): SceneAnalysis {
   };
 }
 
-export async function analyzeImage(base64Data: string, mimeType: string): Promise<SceneAnalysis> {
-  const geminiKey = process.env.GOOGLE_GENERATIVE_AI_KEY;
-  if (!geminiKey) {
-    throw new Error('GOOGLE_GENERATIVE_AI_KEY is not set');
+export interface InferenceOptions {
+  apiKey: string;
+  /** Aborts the provider call; aborting does not cancel work already billed upstream. */
+  signal: AbortSignal;
+}
+
+/**
+ * Sends one image plus the analysis prompt to Gemini as a single request.
+ * The SDK performs no automatic retries; failures map to safe ApiErrors
+ * without provider messages, which can echo request details.
+ */
+export async function analyzeImage(
+  image: { bytes: Uint8Array; mimeType: string },
+  { apiKey, signal }: InferenceOptions
+): Promise<SceneAnalysis> {
+  if (signal.aborted) throw abortError(signal);
+
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({
+    model: GEMINI_MODEL,
+    generationConfig: { maxOutputTokens: ANALYSIS_LIMITS.MAX_OUTPUT_TOKENS },
+  });
+
+  let text: string;
+  try {
+    const result = await model.generateContent(
+      [
+        ANALYSIS_PROMPT,
+        { inlineData: { data: Buffer.from(image.bytes).toString('base64'), mimeType: image.mimeType } },
+      ],
+      { signal }
+    );
+    text = result.response.text();
+  } catch (err) {
+    throw providerError(err, signal);
   }
 
-  const genAI = new GoogleGenerativeAI(geminiKey);
-  const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
-
-  const result = await model.generateContent([
-    ANALYSIS_PROMPT,
-    {
-      inlineData: {
-        data: base64Data,
-        mimeType,
-      },
-    },
-  ]);
-
-  const response = result.response;
-  const text = response.text();
-
+  if (!text.trim()) {
+    throw new ApiError(502, 'empty_output', 'The AI provider returned no analysis.');
+  }
+  if (text.length > ANALYSIS_LIMITS.MAX_OUTPUT_CHARS) {
+    throw new ApiError(502, 'output_too_large', 'The AI provider returned an oversized analysis.');
+  }
   return parseAnalysis(text);
 }
 
-export async function analyzeScene(lat: number, lng: number, heading: number = 0, pitch: number = 0): Promise<SceneAnalysis> {
-  const mapsKey = process.env.GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
-  if (!mapsKey) {
-    throw new Error('Google Maps API key is not set. Add GOOGLE_MAPS_API_KEY to .env.local');
+function providerError(err: unknown, signal: AbortSignal): ApiError {
+  if (signal.aborted) return abortError(signal);
+  if (err instanceof GoogleGenerativeAIResponseError) {
+    return new ApiError(422, 'analysis_refused', 'The AI provider declined to analyze this image.');
   }
-
-  // Step 1: Fetch Street View image via Static API
-  const imageUrl = `https://maps.googleapis.com/maps/api/streetview?size=640x640&location=${lat},${lng}&heading=${heading}&pitch=${pitch}&radius=50000&key=${mapsKey}`;
-
-  let imageResponse: Response;
-  try {
-    imageResponse = await fetch(imageUrl);
-  } catch (err) {
-    throw new Error(`Network error fetching Street View image: ${err}`);
+  if (err instanceof GoogleGenerativeAIFetchError) {
+    const upstreamStatus = err.status;
+    if (upstreamStatus === 429) {
+      return new ApiError(429, 'provider_quota', 'The AI provider is rate limited or out of quota. Try again later.', { upstreamStatus });
+    }
+    if (upstreamStatus === 400 || upstreamStatus === 401 || upstreamStatus === 403) {
+      return new ApiError(502, 'provider_rejected', 'The AI provider rejected the request.', { upstreamStatus });
+    }
+    return new ApiError(502, 'provider_error', 'The AI provider failed to respond.', { upstreamStatus });
   }
-
-  if (!imageResponse.ok) {
-    const body = await imageResponse.text().catch(() => '');
-    throw new Error(
-      `Street View Static API returned ${imageResponse.status}: ${body.slice(0, 300)}`
-    );
-  }
-
-  const contentType = imageResponse.headers.get('content-type') || '';
-  if (!contentType.startsWith('image/')) {
-    const body = await imageResponse.text().catch(() => '');
-    throw new Error(
-      `Street View Static API returned non-image content-type "${contentType}": ${body.slice(0, 300)}`
-    );
-  }
-
-  // Step 2: Convert to base64
-  const imageBuffer = await imageResponse.arrayBuffer();
-  const base64Image = Buffer.from(imageBuffer).toString('base64');
-
-  if (base64Image.length < 100) {
-    throw new Error('Street View image is suspiciously small — possibly an error response');
-  }
-
-  // Step 3: Send to Gemini
-  return analyzeImage(base64Image, contentType);
+  return new ApiError(502, 'provider_error', 'The AI provider failed to respond.');
 }
-

@@ -1,5 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { LOCATION_POOL } from '@/lib/location-pool';
+import { ApiError, errorResponse, jsonResponse, newRequestId } from '@/lib/server/api-error';
+import { BODY_LIMITS } from '@/lib/server/limits';
+import { readJsonObject } from '@/lib/server/request-body';
+import { parseUsedLocations } from '@/lib/server/validation';
 import type { Coordinate } from '@/lib/types';
 
 const MIN_DISTANCE_KM = 50;
@@ -37,29 +41,25 @@ function isTooClose(coord: Coordinate, used: Coordinate[]): boolean {
 }
 
 export async function POST(request: NextRequest) {
+  const requestId = newRequestId();
   try {
-    const body = await request.json();
-    const { usedLocations = [] } = body as { usedLocations?: Coordinate[] };
+    const usedLocations = parseUsedLocations(
+      await readJsonObject(request, BODY_LIMITS.GENERATE_LOCATION)
+    );
 
     const validLocations = LOCATION_POOL.filter(
       (coord) => !isTooClose(coord, usedLocations)
     );
 
     if (validLocations.length === 0) {
-      return NextResponse.json(
-        { error: 'No valid locations available' },
-        { status: 400 }
-      );
+      throw new ApiError(400, 'no_locations_available', 'No valid locations available');
     }
 
     const pick =
       validLocations[Math.floor(Math.random() * validLocations.length)];
 
-    return NextResponse.json({ coordinate: pick, source: 'pool' });
-  } catch {
-    return NextResponse.json(
-      { error: 'Failed to generate location' },
-      { status: 500 }
-    );
+    return jsonResponse({ coordinate: pick, source: 'pool' }, requestId);
+  } catch (err) {
+    return errorResponse(err, requestId, 'generate-location');
   }
 }
