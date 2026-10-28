@@ -1,31 +1,22 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { analyzeScene } from '@/lib/gemini';
+import { NextRequest } from 'next/server';
+import { runSceneAnalysis } from '@/lib/server/analysis';
+import { errorResponse, jsonResponse, newRequestId } from '@/lib/server/api-error';
+import { BODY_LIMITS } from '@/lib/server/limits';
+import { readJsonObject } from '@/lib/server/request-body';
+import { loadServerConfig } from '@/lib/server/server-config';
+import { checkTrainingAccess } from '@/lib/server/training-access';
+import { parseStreetViewRequest } from '@/lib/server/validation';
 
 export async function POST(request: NextRequest) {
+  const requestId = newRequestId();
   try {
-    const body = await request.json();
-    const { lat, lng, heading = 0, pitch = 0 } = body;
-
-    if (typeof lat !== 'number' || typeof lng !== 'number') {
-      return NextResponse.json({ error: 'Invalid coordinates' }, { status: 400 });
-    }
-
-    if (!process.env.GOOGLE_GENERATIVE_AI_KEY) {
-      return NextResponse.json(
-        { error: 'AI analysis is not configured. Set GOOGLE_GENERATIVE_AI_KEY.' },
-        { status: 503 }
-      );
-    }
-
-    const analysis = await analyzeScene(lat, lng, heading, pitch);
-
-    return NextResponse.json({ analysis });
+    // Access, input and configuration are all checked before any external request.
+    const config = await loadServerConfig();
+    checkTrainingAccess(request, config);
+    const view = parseStreetViewRequest(await readJsonObject(request, BODY_LIMITS.SCENE_ANALYSIS));
+    const analysis = await runSceneAnalysis(view, config, request.signal);
+    return jsonResponse({ analysis }, requestId);
   } catch (err) {
-    console.error('AI analysis error:', err);
-    const message = err instanceof Error ? err.message : 'AI analysis failed.';
-    return NextResponse.json(
-      { error: message },
-      { status: 500 }
-    );
+    return errorResponse(err, requestId, 'ai-analysis');
   }
 }

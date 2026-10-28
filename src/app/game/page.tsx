@@ -11,7 +11,7 @@ import RoundResult from '@/components/RoundResult';
 import SessionSummary from '@/components/SessionSummary';
 import type { Coordinate } from '@/lib/types';
 import { formatScore } from '@/utils/formatters';
-import { DEFAULTS } from '@/utils/constants';
+import { parseGameSettings } from '@/lib/game-settings';
 
 function GameContent() {
   const searchParams = useSearchParams();
@@ -32,9 +32,8 @@ function GameContent() {
 
   // Start session from URL params on mount
   useEffect(() => {
-    const player = searchParams.get('player') || 'Anonymous';
-    const rounds = parseInt(searchParams.get('rounds') || String(DEFAULTS.ROUND_COUNT));
-    startSession(player, rounds);
+    const { playerName, totalRounds } = parseGameSettings(searchParams);
+    startSession(playerName, totalRounds);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset state on new round

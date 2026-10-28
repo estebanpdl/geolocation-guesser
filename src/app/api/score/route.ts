@@ -1,26 +1,28 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { haversineDistance, getAccuracyCategory, calculateScore } from '@/lib/distance';
-import type { Coordinate } from '@/lib/types';
+import { errorResponse, jsonResponse, newRequestId } from '@/lib/server/api-error';
+import { BODY_LIMITS } from '@/lib/server/limits';
+import { readJsonObject } from '@/lib/server/request-body';
+import { parseScoreRequest } from '@/lib/server/validation';
 
 export async function POST(request: NextRequest) {
+  const requestId = newRequestId();
   try {
-    const body = await request.json();
-    const { guess, actual }: { guess: Coordinate; actual: Coordinate } = body;
-
-    if (!guess || !actual || typeof guess.lat !== 'number' || typeof actual.lat !== 'number') {
-      return NextResponse.json({ error: 'Invalid coordinates' }, { status: 400 });
-    }
+    const { guess, actual } = parseScoreRequest(await readJsonObject(request, BODY_LIMITS.SCORE));
 
     const distanceKm = haversineDistance(guess, actual);
     const score = calculateScore(distanceKm);
     const category = getAccuracyCategory(distanceKm);
 
-    return NextResponse.json({
-      distanceKm: parseFloat(distanceKm.toFixed(2)),
-      score,
-      category,
-    });
-  } catch {
-    return NextResponse.json({ error: 'Failed to calculate score' }, { status: 500 });
+    return jsonResponse(
+      {
+        distanceKm: parseFloat(distanceKm.toFixed(2)),
+        score,
+        category,
+      },
+      requestId
+    );
+  } catch (err) {
+    return errorResponse(err, requestId, 'score');
   }
 }

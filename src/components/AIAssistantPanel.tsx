@@ -1,9 +1,11 @@
 'use client';
 
 import { useState, useCallback } from 'react';
+import { readApiError, TRAINING_SESSION_REQUIRED } from '@/lib/api-client';
 import type { Coordinate } from '@/lib/types';
 import AnalysisSections from './AnalysisSections';
 import type { AnalysisResult } from './AnalysisSections';
+import TrainingAccessLink from './TrainingAccessLink';
 
 interface AIAssistantPanelProps {
   location: Coordinate | null;
@@ -15,12 +17,14 @@ export default function AIAssistantPanel({ location, disabled = false, onAnalysi
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [needsAccess, setNeedsAccess] = useState(false);
 
   const handleAnalyze = useCallback(async () => {
     if (!location || loading || disabled) return;
 
     setLoading(true);
     setError(null);
+    setNeedsAccess(false);
 
     try {
       const res = await fetch('/api/ai-analysis', {
@@ -35,8 +39,9 @@ export default function AIAssistantPanel({ location, disabled = false, onAnalysi
       });
 
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Analysis failed');
+        const { message, code } = await readApiError(res, 'Analysis failed');
+        setNeedsAccess(code === TRAINING_SESSION_REQUIRED);
+        throw new Error(message);
       }
 
       const data = await res.json();
@@ -82,6 +87,8 @@ export default function AIAssistantPanel({ location, disabled = false, onAnalysi
           setError(null);
         }}
       />
+
+      {needsAccess && error && <TrainingAccessLink />}
     </div>
   );
 }

@@ -5,6 +5,8 @@ import Link from 'next/link';
 import PhotoDropZone from '@/components/PhotoDropZone';
 import AnalysisSections from '@/components/AnalysisSections';
 import type { AnalysisResult } from '@/components/AnalysisSections';
+import TrainingAccessLink from '@/components/TrainingAccessLink';
+import { readApiError, TRAINING_SESSION_REQUIRED } from '@/lib/api-client';
 
 interface ImageData {
   base64: string;
@@ -18,6 +20,7 @@ export default function AnalyzePage() {
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [needsAccess, setNeedsAccess] = useState(false);
 
   const handleImageSelected = useCallback((base64: string, mimeType: string, fileName: string) => {
     setImageData({ base64, mimeType, fileName });
@@ -38,6 +41,7 @@ export default function AnalyzePage() {
 
     setLoading(true);
     setError(null);
+    setNeedsAccess(false);
 
     try {
       const res = await fetch('/api/ai-analysis-upload', {
@@ -50,8 +54,9 @@ export default function AnalyzePage() {
       });
 
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Analysis failed');
+        const { message, code } = await readApiError(res, 'Analysis failed');
+        setNeedsAccess(code === TRAINING_SESSION_REQUIRED);
+        throw new Error(message);
       }
 
       const data = await res.json();
@@ -132,6 +137,8 @@ export default function AnalyzePage() {
               onRetry={handleAnalyze}
               onClear={() => setAnalysis(null)}
             />
+
+            {needsAccess && error && <TrainingAccessLink />}
           </div>
         </div>
       </main>
