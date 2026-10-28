@@ -5,9 +5,11 @@
  *
  * Secrets are entered at a masked prompt and saved to the per-user credential
  * store. Status output reports only whether each setting is configured and
- * where it comes from, never the value.
+ * where it comes from, never the value. Settings are evaluated against the
+ * environment the server sees: this shell plus the project's .env files.
  */
-import { pathToFileURL } from 'node:url';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   hasBroadPermissions,
   isStorableValue,
@@ -30,9 +32,13 @@ import {
   normalizeAccessCode,
   resolveServerConfig,
 } from '../src/lib/server/server-config.ts';
+import { commandFor, loadServerEnvs, SHELL_SOURCE, type ServerEnv } from './project-env.ts';
 
 export interface AuthIO {
+  /** This process's environment. */
   env: Record<string, string | undefined>;
+  /** Project root containing the server's .env files. */
+  projectDir: string;
   out(line: string): void;
   err(line: string): void;
   /** Reads one line without echoing it. */
@@ -60,9 +66,11 @@ Commands:
   training close                Block AI analysis for everyone
   training off                  Local use: AI analysis needs no access code
 
-Environment variables override saved values: ${Object.values(CREDENTIAL_ENV).join(', ')},
-${TRAINING_ENV.MODE}, ${TRAINING_ENV.ACCESS_CODE}. Changes apply to a running server on its
-next request. Rotating the code ends existing training sessions.`;
+Environment variables, from this shell or the project's .env files, override saved values:
+${Object.values(CREDENTIAL_ENV).join(', ')}, ${TRAINING_ENV.MODE}, ${TRAINING_ENV.ACCESS_CODE}.
+A saved "closed" training mode overrides ${TRAINING_ENV.MODE}. Training changes that an
+environment value would override are refused. Changes apply to a running server on its next
+request. Rotating the code ends existing training sessions.`;
 
 export async function runAuth(args: string[], io: AuthIO): Promise<number> {
   const [command = 'status', subject, ...rest] = args;
@@ -73,7 +81,7 @@ export async function runAuth(args: string[], io: AuthIO): Promise<number> {
         return subject ? usageError(io) : await status(io);
       case 'path':
         if (subject) return usageError(io);
-        io.out(resolveStorePath(io.env));
+        io.out(storeLocation(loadServerEnvs(io.projectDir, io.env)));
         return 0;
       case 'set':
         return await setCredential(io, subject);
@@ -100,20 +108,56 @@ function usageError(io: AuthIO): number {
   return 2;
 }
 
+/** The store both `next start` and `next dev` would use; differing locations are an error. */
+function storeLocation(envs: ServerEnv[]): string {
+  const paths = envs.map((e) => resolveStorePath(e.env));
+  if (new Set(paths).size > 1) {
+    const detail = envs.map((e, i) => `${commandFor(e.mode)}: ${paths[i]}`).join('; ');
+    throw new Error(`The server would use different credential stores (${detail}). Set GEOLOCATION_GUESSER_CREDENTIALS_FILE consistently.`);
+  }
+  return paths[0];
+}
+
+/** Where a variable is effectively set, e.g. ".env.local" or ".env.development (next dev)". */
+function overrideSources(envs: ServerEnv[], name: string): string[] {
+  const modesBySource = new Map<string, string[]>();
+  for (const e of envs) {
+    if (!effectiveValue(e.env[name])) continue;
+    const source = e.sources[name];
+    modesBySource.set(source, [...(modesBySource.get(source) ?? []), commandFor(e.mode)]);
+  }
+  return [...modesBySource].map(([source, modes]) =>
+    modes.length === envs.length ? source : `${source} (${modes.join(', ')})`
+  );
+}
+
+function describeEnvSources(e: ServerEnv): string {
+  return [SHELL_SOURCE, ...e.loadedFiles].join(', ');
+}
+
 async function status(io: AuthIO): Promise<number> {
-  const storePath = resolveStorePath(io.env);
+  const envs = loadServerEnvs(io.projectDir, io.env);
+  const storePath = storeLocation(envs);
   const store = await readStore(storePath);
-  for (const line of describeServerConfig(resolveServerConfig(io.env, store))) io.out(line);
+  const [production, development] = envs.map((e) => describeServerConfig(resolveServerConfig(e.env, store)));
+
+  io.out(`Settings for next start (${describeEnvSources(envs[0])}):`);
+  for (const line of production) io.out(line);
+  const devOnly = development.filter((line) => !production.includes(line));
+  if (devOnly.length > 0) {
+    io.out(`Differences under next dev (${describeEnvSources(envs[1])}):`);
+    for (const line of devOnly) io.out(line);
+  }
   if (store.status === 'ok' && (await hasBroadPermissions(storePath))) {
     io.out('Warning: the credential store is readable by other users; restrict it with: chmod 600 <path>');
   }
-  io.out('Environment values shown are from this shell; the server also reads its own environment and .env files.');
+  io.out("Values set only in the server's own process environment (for example by a service manager) are not visible here.");
   return 0;
 }
 
 /** Loads the store for modification, refusing to overwrite a file it cannot parse. */
-async function loadForUpdate(io: AuthIO): Promise<{ path: string; data: StoreData }> {
-  const storePath = resolveStorePath(io.env);
+async function loadForUpdate(envs: ServerEnv[]): Promise<{ path: string; data: StoreData }> {
+  const storePath = storeLocation(envs);
   const store = await readStore(storePath);
   if (store.status === 'invalid') {
     throw new Error(`The credential store at ${storePath} is unreadable or has an unsupported format. Fix or remove it, then retry.`);
@@ -121,15 +165,17 @@ async function loadForUpdate(io: AuthIO): Promise<{ path: string; data: StoreDat
   return { path: storePath, data: store.data };
 }
 
-function noteEnvOverride(io: AuthIO, envName: string): void {
-  if (effectiveValue(io.env[envName])) {
-    io.out(`Note: ${envName} is set in this environment and takes precedence over the saved value.`);
+function noteEnvOverride(io: AuthIO, envs: ServerEnv[], envName: string): void {
+  const sources = overrideSources(envs, envName);
+  if (sources.length > 0) {
+    io.out(`Note: ${envName} is set in ${sources.join(' and ')} and takes precedence over the saved value.`);
   }
 }
 
 async function setCredential(io: AuthIO, name: string | undefined): Promise<number> {
   const target = name ? CREDENTIAL_NAMES[name] : undefined;
   if (!target) return usageError(io);
+  const envs = loadServerEnvs(io.projectDir, io.env);
 
   const value = (await io.readSecret(`${target.label}: `)).trim();
   if (!isStorableValue(value) || !effectiveValue(value)) {
@@ -137,27 +183,28 @@ async function setCredential(io: AuthIO, name: string | undefined): Promise<numb
     return 1;
   }
 
-  const store = await loadForUpdate(io);
+  const store = await loadForUpdate(envs);
   store.data.credentials[target.field] = value;
   await writeStore(store.path, store.data);
   io.out(`Saved the ${target.label} to ${store.path}.`);
-  noteEnvOverride(io, CREDENTIAL_ENV[target.field]);
+  noteEnvOverride(io, envs, CREDENTIAL_ENV[target.field]);
   return 0;
 }
 
 async function removeCredential(io: AuthIO, name: string | undefined): Promise<number> {
   const target = name ? CREDENTIAL_NAMES[name] : undefined;
   if (!target) return usageError(io);
+  const envs = loadServerEnvs(io.projectDir, io.env);
 
-  const store = await loadForUpdate(io);
+  const store = await loadForUpdate(envs);
   if (!store.data.credentials[target.field]) {
     io.out(`No saved ${target.label}.`);
-    return 0;
+  } else {
+    delete store.data.credentials[target.field];
+    await writeStore(store.path, store.data);
+    io.out(`Removed the saved ${target.label}.`);
   }
-  delete store.data.credentials[target.field];
-  await writeStore(store.path, store.data);
-  io.out(`Removed the saved ${target.label}.`);
-  noteEnvOverride(io, CREDENTIAL_ENV[target.field]);
+  noteEnvOverride(io, envs, CREDENTIAL_ENV[target.field]);
   return 0;
 }
 
@@ -176,7 +223,22 @@ async function training(io: AuthIO, action: string | undefined): Promise<number>
   }
 }
 
+/** A saved access code has no effect while an environment code overrides it; say so instead of saving. */
+function refuseOverriddenCode(io: AuthIO, envs: ServerEnv[]): boolean {
+  const sources = overrideSources(envs, TRAINING_ENV.ACCESS_CODE);
+  if (sources.length === 0) return false;
+  io.err(
+    `Nothing saved: ${TRAINING_ENV.ACCESS_CODE} is set in ${sources.join(' and ')} and overrides the saved code, ` +
+      'so a new code would not take effect and existing sessions would keep working. ' +
+      'Change or remove it there, then restart the server.'
+  );
+  return true;
+}
+
 async function setAccessCode(io: AuthIO): Promise<number> {
+  const envs = loadServerEnvs(io.projectDir, io.env);
+  if (refuseOverriddenCode(io, envs)) return 1;
+
   const code = (await io.readSecret('Training access code: ')).trim();
   const normalized = normalizeAccessCode(code);
   if (!isStorableValue(code) || !isUsableAccessCode(normalized)) {
@@ -189,43 +251,54 @@ async function setAccessCode(io: AuthIO): Promise<number> {
     return 1;
   }
 
-  const store = await loadForUpdate(io);
+  const store = await loadForUpdate(envs);
   store.data.training.accessCode = code;
   await writeStore(store.path, store.data);
   io.out('Saved the training access code. Sessions issued under a previous code no longer work.');
-  noteEnvOverride(io, TRAINING_ENV.ACCESS_CODE);
   return 0;
 }
 
 async function rotateAccessCode(io: AuthIO): Promise<number> {
-  const store = await loadForUpdate(io);
+  const envs = loadServerEnvs(io.projectDir, io.env);
+  if (refuseOverriddenCode(io, envs)) return 1;
+
+  const store = await loadForUpdate(envs);
   const code = generateAccessCode();
   store.data.training.accessCode = code;
   await writeStore(store.path, store.data);
   io.out(`New training access code: ${code}`);
   io.out('It is shown only now. Sessions issued under the previous code no longer work.');
-  noteEnvOverride(io, TRAINING_ENV.ACCESS_CODE);
   return 0;
 }
 
 async function setTrainingMode(io: AuthIO, mode: TrainingMode): Promise<number> {
-  const store = await loadForUpdate(io);
-  store.data.training.mode = mode;
-  await writeStore(store.path, store.data);
+  const envs = loadServerEnvs(io.projectDir, io.env);
+  const store = await loadForUpdate(envs);
+  const updated: StoreData = { ...store.data, training: { ...store.data.training, mode } };
 
+  // Check the result the server would compute before saving anything.
+  const effective = envs.map((e) => ({ e, config: resolveServerConfig(e.env, { status: 'ok', path: store.path, data: updated }) }));
+  const blocked = effective.filter(({ config }) => config.training.mode !== mode);
+  if (blocked.length > 0) {
+    const sources = overrideSources(envs, TRAINING_ENV.MODE);
+    const where = sources.length > 0 ? `${TRAINING_ENV.MODE} in ${sources.join(' and ')}` : 'the environment';
+    io.err(
+      `Nothing saved: ${where} keeps training ${blocked[0].config.training.mode} ` +
+        `for ${blocked.map(({ e }) => commandFor(e.mode)).join(' and ')}. Change or remove it there, then retry.`
+    );
+    return 1;
+  }
+
+  await writeStore(store.path, updated);
   const messages: Record<TrainingMode, string> = {
     open: 'Training is open: AI analysis requires the access code.',
     closed: 'Training is closed: AI analysis is blocked for everyone.',
     off: 'Training mode is off: AI analysis needs no access code. Use this only when the server is not publicly reachable.',
   };
   io.out(messages[mode]);
-  if (mode === 'open') {
-    const config = resolveServerConfig(io.env, { status: 'ok', path: store.path, data: store.data });
-    if (!config.training.accessCode) {
-      io.out('Warning: no usable access code is configured, so AI analysis stays blocked. Run: npm run auth -- training rotate');
-    }
+  if (mode === 'open' && effective.some(({ config }) => !config.training.accessCode)) {
+    io.out('Warning: no usable access code is configured, so AI analysis stays blocked. Run: npm run auth -- training rotate');
   }
-  noteEnvOverride(io, TRAINING_ENV.MODE);
   return 0;
 }
 
@@ -281,6 +354,7 @@ async function readSecretFromTerminal(prompt: string): Promise<string> {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const io: AuthIO = {
     env: process.env,
+    projectDir: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'),
     out: (line) => console.log(line),
     err: (line) => console.error(line),
     readSecret: readSecretFromTerminal,

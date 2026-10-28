@@ -2,7 +2,8 @@
  * Effective server configuration: operator credentials and training access settings.
  *
  * Precedence per field: a nonempty, non-placeholder environment variable, then the
- * credential store, then unavailable. Values are never included in status output.
+ * credential store, then unavailable. The one exception is the training mode: a saved
+ * `closed` overrides the environment. Values are never included in status output.
  * Like credential-store.ts, this module is loadable by the `auth` command directly.
  */
 import { randomInt } from 'node:crypto';
@@ -115,23 +116,26 @@ export function resolveServerConfig(env: Env, store: { status: StoreStatus; path
   }
 
   // Mode: an invalid explicit setting or an unreadable store blocks paid routes rather than opening them.
+  // A saved `closed` is the operator's off switch, so it also wins over an environment mode.
   let mode: TrainingMode;
   let modeSource: ServerConfig['training']['modeSource'];
   const envMode = env[TRAINING_ENV.MODE]?.trim().toLowerCase();
-  if (envMode) {
-    if (isTrainingMode(envMode)) {
-      mode = envMode;
-      modeSource = 'environment';
-    } else {
-      mode = 'closed';
-      modeSource = 'fail-closed';
-      problems.push('training_mode_invalid');
-    }
+  const storeMode = storeUsable ? store.data.training.mode : undefined;
+  if (envMode && !isTrainingMode(envMode)) {
+    mode = 'closed';
+    modeSource = 'fail-closed';
+    problems.push('training_mode_invalid');
   } else if (!storeUsable) {
     mode = 'closed';
     modeSource = 'fail-closed';
-  } else if (store.data.training.mode) {
-    mode = store.data.training.mode;
+  } else if (storeMode === 'closed') {
+    mode = 'closed';
+    modeSource = 'store';
+  } else if (envMode) {
+    mode = envMode as TrainingMode;
+    modeSource = 'environment';
+  } else if (storeMode) {
+    mode = storeMode;
     modeSource = 'store';
   } else {
     mode = 'off';
@@ -194,7 +198,8 @@ export async function loadServerConfig(env: Env = process.env): Promise<ServerCo
   let fingerprint = 'missing';
   try {
     const stat = await fs.stat(storePath);
-    fingerprint = `${stat.mtimeMs}:${stat.size}`;
+    // The inode changes on every atomic replace, even within the timestamp resolution.
+    fingerprint = `${stat.ino}:${stat.mtimeMs}:${stat.size}`;
   } catch {
     // Missing or unreadable; readStore classifies it.
   }

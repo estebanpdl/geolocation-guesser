@@ -134,6 +134,17 @@ describe('resolveServerConfig precedence', () => {
     });
   });
 
+  it('lets a saved closed mode win over an environment mode', () => {
+    for (const envMode of ['open', 'off']) {
+      const config = resolveServerConfig({ TRAINING_MODE: envMode }, store({ training: { mode: 'closed' } }));
+      expect(config.training).toMatchObject({ mode: 'closed', modeSource: 'store' });
+    }
+    const envClosed = resolveServerConfig({ TRAINING_MODE: 'closed' }, store({ training: { mode: 'open' } }));
+    expect(envClosed.training).toMatchObject({ mode: 'closed', modeSource: 'environment' });
+    const envOpen = resolveServerConfig({ TRAINING_MODE: 'open' }, store({ training: { mode: 'off' } }));
+    expect(envOpen.training).toMatchObject({ mode: 'open', modeSource: 'environment' });
+  });
+
   it('closes training when the mode setting or the store is invalid', () => {
     const badMode = resolveServerConfig({ TRAINING_MODE: 'public' }, store());
     expect(badMode.training).toMatchObject({ mode: 'closed', modeSource: 'fail-closed' });
