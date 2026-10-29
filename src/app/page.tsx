@@ -34,7 +34,7 @@ export default function HomePage() {
         {/* Logo / Title */}
         <div className="text-center space-y-2">
           <h1 className="text-3xl font-bold tracking-tight text-slate-100">
-            GeoINT Trainer
+            Geolocation Guesser
           </h1>
           <p className="text-tactical-muted text-sm">
             OSINT Geolocation Training Platform

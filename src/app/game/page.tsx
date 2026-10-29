@@ -133,7 +133,7 @@ function GameContent() {
       header={
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <span className="text-sm font-bold text-slate-200">GeoINT</span>
+            <span className="text-sm font-bold text-slate-200">Geolocation Guesser</span>
             <span className="text-xs text-tactical-muted font-mono">
               Round {session.currentRound}/{session.totalRounds}
             </span>

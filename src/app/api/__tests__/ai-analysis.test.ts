@@ -11,15 +11,19 @@ import {
   geminiText,
   installFakeFetch,
   isGemini,
+  isOpenAI,
   isStreetView,
   jsonRequest,
+  openaiKeyOf,
   openaiText,
   rewriteStore,
   SAMPLE_ANALYSIS,
   sessionCookieFrom,
   streetViewImage,
   streetViewStatus,
+  syntheticJpeg,
   SYNTHETIC,
+  toBase64,
   useSyntheticStore,
 } from '@/test/fakes';
 
@@ -161,13 +165,56 @@ describe('POST /api/ai-analysis', () => {
       ['an unknown provider', { provider: 'mistral', model: 'gemini-3.5-flash-lite' }, 400, 'unknown_provider'],
       ['a malformed selection', 'gemini-3.5-flash-lite', 400, 'invalid_selection'],
       ['a mismatched pair', { provider: 'openai', model: 'gemini-3.5-flash-lite' }, 400, 'selection_mismatch'],
-      ['OpenAI, which may not receive Street View imagery', { provider: 'openai', model: 'gpt-6-luna' }, 403, 'street_view_not_permitted'],
     ])('rejects %s before fetching the Street View image', async (_label, selection, status, code) => {
       useServerKeys();
       const { calls } = installFakeFetch(streetViewImage(), geminiText());
       const response = await analyze({ ...VIEW, selection });
       expect([response.status, (await response.json()).code]).toEqual([status, code]);
       expect(calls).toHaveLength(0);
+    });
+
+    it('sends the same Street View image and prompt to either provider', async () => {
+      useServerKeys();
+      vi.stubEnv('OPENAI_API_KEY', SYNTHETIC.OPENAI_KEY);
+      const bytes = syntheticJpeg();
+      const startingView = { lat: 35.6762, lng: 139.6503, heading: 135, pitch: -10 };
+
+      const sent: Record<string, { streetView: string; image: string; prompt: string; body: unknown }> = {};
+      for (const selection of [
+        { provider: 'gemini', model: 'gemini-3.5-flash-lite' },
+        { provider: 'openai', model: 'gpt-6-luna' },
+      ]) {
+        const { calls } = installFakeFetch(streetViewImage(bytes), geminiText(), openaiText());
+        const response = await analyze({ ...startingView, selection });
+        const body = await response.json();
+
+        expect(response.status).toBe(200);
+        expect(body.selection).toEqual(selection);
+        expect(calls).toHaveLength(2);
+        const [streetView, inference] = calls;
+        expect(isStreetView(streetView.url)).toBe(true);
+        const request = JSON.parse(String(inference.init?.body));
+        if (selection.provider === 'gemini') {
+          expect(isGemini(inference.url)).toBe(true);
+          const [promptPart, imagePart] = request.contents[0].parts;
+          sent.gemini = {
+            streetView: streetView.url.search,
+            image: `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`,
+            prompt: promptPart.text,
+            body: body.analysis,
+          };
+        } else {
+          expect(isOpenAI(inference.url)).toBe(true);
+          expect(openaiKeyOf(inference)).toBe(SYNTHETIC.OPENAI_KEY);
+          const [promptPart, imagePart] = request.input[0].content;
+          sent.openai = { streetView: streetView.url.search, image: imagePart.image_url, prompt: promptPart.text, body: body.analysis };
+        }
+      }
+
+      expect(sent.openai).toEqual(sent.gemini);
+      expect(sent.gemini.image).toBe(`data:image/jpeg;base64,${toBase64(bytes)}`);
+      const params = new URLSearchParams(sent.gemini.streetView);
+      expect([params.get('location'), params.get('heading'), params.get('pitch')]).toEqual(['35.6762,139.6503', '135', '-10']);
     });
   });
 
@@ -232,7 +279,7 @@ describe('POST /api/ai-analysis', () => {
       expect(calls).toHaveLength(0);
     });
 
-    it('do not unlock Street View analysis for a provider not permitted to receive it', async () => {
+    it('work for OpenAI scenes, with the server key for the image', async () => {
       useServerKeys();
       const { calls } = installFakeFetch(streetViewImage(), openaiText());
       const response = await analyze({
@@ -241,9 +288,11 @@ describe('POST /api/ai-analysis', () => {
         participantKey: { provider: 'openai', apiKey: SYNTHETIC.PARTICIPANT_OPENAI_KEY },
       });
       const text = await response.text();
-      expect([response.status, JSON.parse(text).code]).toEqual([403, 'street_view_not_permitted']);
+      expect(response.status).toBe(200);
+      expect(JSON.parse(text).credentialSource).toBe('participant');
+      expect(calls[0].url.searchParams.get('key')).toBe(SYNTHETIC.MAPS_SERVER_KEY);
+      expect(calls.filter((c) => isOpenAI(c.url)).map(openaiKeyOf)).toEqual([SYNTHETIC.PARTICIPANT_OPENAI_KEY]);
       expect(text).not.toContain(SYNTHETIC.PARTICIPANT_OPENAI_KEY);
-      expect(calls).toHaveLength(0);
     });
 
     it('fall back to the server key only when blank', async () => {

@@ -26,8 +26,10 @@ describe('CATALOG', () => {
     expect(catalogProblems(TWO_PROVIDER_CATALOG)).toEqual([]);
   });
 
-  it('offers both providers, with OpenAI limited to photos while Street View imagery is not permitted for it', () => {
-    expect(CATALOG.providers.find((p) => p.id === 'openai')).toMatchObject({ enabled: true, participantKeys: true, streetViewImagery: false });
+  it('offers both providers for scenes and photos', () => {
+    for (const id of ['gemini', 'openai']) {
+      expect(CATALOG.providers.find((p) => p.id === id)).toMatchObject({ enabled: true, participantKeys: true, streetViewImagery: true });
+    }
     expect(publicCatalog(config()).providers.map((p) => [p.id, p.models.map((m) => [m.id, m.workflows, m.default])])).toEqual([
       [
         'gemini',
@@ -39,8 +41,8 @@ describe('CATALOG', () => {
       [
         'openai',
         [
-          ['gpt-6-luna', ['photo'], true],
-          ['gpt-6.1-terra', ['photo'], false],
+          ['gpt-6-luna', ['scene', 'photo'], true],
+          ['gpt-6.1-terra', ['scene', 'photo'], false],
         ],
       ],
     ]);
@@ -144,8 +146,14 @@ describe('resolveSelection', () => {
   });
 
   it('refuses Street View analysis for a provider not permitted to receive it, but not photos', () => {
-    const err = selectionError(() => resolveSelection({ provider: 'openai', model: 'gpt-6-luna' }, 'scene'));
+    const noOpenAIStreetView: Catalog = {
+      ...CATALOG,
+      providers: CATALOG.providers.map((p) => (p.id === 'openai' ? { ...p, streetViewImagery: false } : p)),
+    };
+    const openai = { provider: 'openai', model: 'gpt-6-luna' };
+    const err = selectionError(() => resolveSelection(openai, 'scene', noOpenAIStreetView));
     expect([err.status, err.code]).toEqual([403, 'street_view_not_permitted']);
-    expect(resolveSelection({ provider: 'openai', model: 'gpt-6-luna' }, 'photo').model.upstreamModel).toBe('gpt-6-luna');
+    expect(resolveSelection(openai, 'photo', noOpenAIStreetView).model.upstreamModel).toBe('gpt-6-luna');
+    expect(resolveSelection(openai, 'scene').model.upstreamModel).toBe('gpt-6-luna');
   });
 });

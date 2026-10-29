@@ -60,8 +60,7 @@ export interface Catalog {
 export const CATALOG: Catalog = {
   providers: [
     { id: 'gemini', label: 'Gemini', enabled: true, credentialField: 'geminiApiKey', participantKeys: true, streetViewImagery: true },
-    // Street View imagery stays off for OpenAI until Google Maps Platform terms are confirmed to allow it.
-    { id: 'openai', label: 'OpenAI', enabled: true, credentialField: 'openaiApiKey', participantKeys: true, streetViewImagery: false },
+    { id: 'openai', label: 'OpenAI', enabled: true, credentialField: 'openaiApiKey', participantKeys: true, streetViewImagery: true },
   ],
   models: [
     {
