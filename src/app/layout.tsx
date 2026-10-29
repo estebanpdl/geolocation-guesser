@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'GeoINT Trainer',
+  title: 'Geolocation Guesser',
   description: 'OSINT geolocation training platform — develop analytical reasoning through structured hypothesis-driven practice',
 };
 

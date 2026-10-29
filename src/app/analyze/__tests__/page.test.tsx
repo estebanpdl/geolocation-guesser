@@ -63,4 +63,9 @@ describe('AnalyzePage', () => {
     await act(async () => {});
     expect(screen.queryByRole('link', { name: 'Training access' })).toBeNull();
   });
+
+  it('links the product name in the header back home', async () => {
+    await renderWithPhoto();
+    expect(screen.getByRole('link', { name: 'Geolocation Guesser' }).getAttribute('href')).toBe('/');
+  });
 });

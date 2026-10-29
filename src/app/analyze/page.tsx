@@ -68,7 +68,7 @@ export default function AnalyzePage() {
       <header className="border-b border-tactical-border bg-tactical-surface">
         <div className="max-w-6xl mx-auto px-4 h-12 flex items-center gap-3">
           <Link href="/" className="text-sm font-bold text-slate-100 hover:text-tactical-green transition-colors">
-            GeoINT Trainer
+            Geolocation Guesser
           </Link>
           <span className="text-tactical-muted">/</span>
           <span className="text-xs text-tactical-muted uppercase tracking-wider">Photo Analysis</span>
