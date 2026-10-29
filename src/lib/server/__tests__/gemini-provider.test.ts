@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ANALYSIS_PROMPT, ANALYSIS_SCHEMA } from '../analysis-prompt';
 import { ApiError } from '../api-error';
 import { validateImageBytes } from '../image';
@@ -7,6 +7,7 @@ import { geminiAdapter } from '../providers/gemini';
 import type { GenerationRequest } from '../providers/types';
 import {
   geminiBlocked,
+  geminiKeyInvalid,
   geminiKeyOf,
   geminiStatus,
   geminiText,
@@ -38,12 +39,13 @@ async function failure(promise: Promise<unknown>): Promise<ApiError> {
 }
 
 describe('geminiAdapter', () => {
-  it('makes one JSON-mode request with the key in a header, the given model and bounded output', async () => {
+  it('makes one JSON-schema request with the key in a header, the given model, the image and bounded output', async () => {
     const { calls } = installFakeFetch(geminiText());
     await expect(geminiAdapter.generate(request())).resolves.toEqual({ status: 'complete', text: SAMPLE_ANALYSIS_JSON });
 
     expect(calls).toHaveLength(1);
     const [call] = calls;
+    expect(call.url.origin).toBe('https://generativelanguage.googleapis.com');
     expect(call.url.pathname).toContain('models/synthetic-gemini-model:generateContent');
     expect(call.url.search).not.toContain(SYNTHETIC.GEMINI_KEY);
     expect(geminiKeyOf(call)).toBe(SYNTHETIC.GEMINI_KEY);
@@ -51,12 +53,28 @@ describe('geminiAdapter', () => {
     const body = JSON.parse(String(call.init?.body));
     expect(body.generationConfig.maxOutputTokens).toBe(8192);
     expect(body.generationConfig.responseMimeType).toBe('application/json');
-    expect(body.generationConfig.responseSchema.required).toEqual(ANALYSIS_SCHEMA.required);
-    expect(body.generationConfig.responseSchema).not.toHaveProperty('additionalProperties');
+    expect(body.generationConfig.responseJsonSchema).toMatchObject({
+      type: 'object',
+      required: ANALYSIS_SCHEMA.required,
+      additionalProperties: false,
+    });
+    expect(body.generationConfig).not.toHaveProperty('responseSchema');
+    expect(body.contents).toHaveLength(1);
+    expect(body.contents[0].parts[0].text).toBe(ANALYSIS_PROMPT);
     expect(body.contents[0].parts[1].inlineData).toEqual({
       mimeType: 'image/jpeg',
       data: Buffer.from(image.bytes).toString('base64'),
     });
+  });
+
+  it('ignores SDK environment settings that would redirect the request or switch backends', async () => {
+    vi.stubEnv('GOOGLE_GEMINI_BASE_URL', 'https://collector.example');
+    vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', 'true');
+    vi.stubEnv('GOOGLE_API_KEY', 'synthetic-environment-key');
+    const { calls } = installFakeFetch(geminiText());
+    await geminiAdapter.generate(request());
+    expect(calls.map((c) => c.url.origin)).toEqual(['https://generativelanguage.googleapis.com']);
+    expect(geminiKeyOf(calls[0])).toBe(SYNTHETIC.GEMINI_KEY);
   });
 
   it('uses only the key of each call when calls interleave', async () => {
@@ -75,13 +93,21 @@ describe('geminiAdapter', () => {
 
   it.each([
     ['MAX_TOKENS', { status: 'truncated' }],
+    ['CONTINUATION', { status: 'truncated' }],
     ['SAFETY', { status: 'refused' }],
     ['RECITATION', { status: 'refused' }],
     ['PROHIBITED_CONTENT', { status: 'refused' }],
     ['IMAGE_SAFETY', { status: 'refused' }],
-  ])('classifies finish reason %s', async (finishReason, expected) => {
-    installFakeFetch(geminiText('{"textAndSigns": "cut off', finishReason));
+    ['IMAGE_PROHIBITED_CONTENT', { status: 'refused' }],
+  ])('classifies finish reason %s after exactly one request', async (finishReason, expected) => {
+    const { calls } = installFakeFetch(geminiText('{"textAndSigns": "cut off', finishReason));
     await expect(geminiAdapter.generate(request())).resolves.toEqual(expected);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('treats an unknown finish reason as a provider failure', async () => {
+    installFakeFetch(geminiText(SAMPLE_ANALYSIS_JSON, 'MALFORMED_FUNCTION_CALL'));
+    expect((await failure(geminiAdapter.generate(request()))).code).toBe('provider_error');
   });
 
   it('reports a blocked prompt as a refusal', async () => {
@@ -89,18 +115,40 @@ describe('geminiAdapter', () => {
     await expect(geminiAdapter.generate(request())).resolves.toEqual({ status: 'refused' });
   });
 
+  it('drops thought parts from the answer', async () => {
+    installFakeFetch(() =>
+      Response.json({
+        candidates: [
+          {
+            content: { role: 'model', parts: [{ text: 'thinking about it', thought: true }, { text: SAMPLE_ANALYSIS_JSON }] },
+            finishReason: 'STOP',
+            index: 0,
+          },
+        ],
+      })
+    );
+    await expect(geminiAdapter.generate(request())).resolves.toEqual({ status: 'complete', text: SAMPLE_ANALYSIS_JSON });
+  });
+
   it.each([
-    [429, 429, 'provider_quota'],
-    [400, 502, 'provider_rejected'],
-    [401, 502, 'provider_rejected'],
-    [403, 502, 'provider_rejected'],
-    [500, 502, 'provider_error'],
-    [503, 502, 'provider_error'],
-  ])('maps upstream %i to %i %s without retrying', async (upstream, status, code) => {
-    const { calls } = installFakeFetch(geminiStatus(upstream));
+    ['429', geminiStatus(429), 429, 'provider_quota', 429],
+    ['400 with API_KEY_INVALID', geminiKeyInvalid(), 502, 'provider_rejected', 400],
+    ['400 for another reason', geminiStatus(400), 502, 'provider_error', 400],
+    ['401', geminiStatus(401), 502, 'provider_rejected', 401],
+    ['403', geminiStatus(403), 502, 'provider_rejected', 403],
+    ['500', geminiStatus(500), 502, 'provider_error', 500],
+    ['503', geminiStatus(503), 502, 'provider_error', 503],
+  ])('maps upstream %s to a safe error without retrying', async (_label, route, status, code, upstream) => {
+    const { calls } = installFakeFetch(route);
     const err = await failure(geminiAdapter.generate(request()));
     expect([err.status, err.code, err.upstreamStatus]).toEqual([status, code, upstream]);
     expect(err.message).not.toContain('upstream detail');
+    expect(calls).toHaveLength(1);
+  });
+
+  it('maps a network failure to a provider error without retrying', async () => {
+    const { calls } = installFakeFetch(() => Promise.reject(new TypeError('fetch failed')));
+    expect((await failure(geminiAdapter.generate(request()))).code).toBe('provider_error');
     expect(calls).toHaveLength(1);
   });
 
@@ -115,7 +163,7 @@ describe('geminiAdapter', () => {
 
   it('turns an abort during the request into the deadline error', async () => {
     const controller = new AbortController();
-    installFakeFetch(
+    const { calls } = installFakeFetch(
       (_url, init) =>
         new Promise<Response>((_resolve, reject) => {
           init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
@@ -124,5 +172,6 @@ describe('geminiAdapter', () => {
     );
     const err = await failure(geminiAdapter.generate(request({ signal: controller.signal })));
     expect([err.status, err.code]).toEqual([504, 'deadline_exceeded']);
+    expect(calls).toHaveLength(1);
   });
 });

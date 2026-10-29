@@ -20,6 +20,7 @@ import type { ValidatedImage } from './image';
 import { attributeCredentialError, resolveInferenceCredential, type InferenceCredential } from './inference-credential';
 import { ANALYSIS_LIMITS, STREET_VIEW_LIMITS } from './limits';
 import { geminiAdapter } from './providers/gemini';
+import { openaiAdapter } from './providers/openai';
 import type { ProviderAdapter } from './providers/types';
 import type { ServerConfig } from './server-config';
 import { fetchStreetViewImage } from './street-view-image';
@@ -35,7 +36,7 @@ export interface AnalysisDependencies {
 
 const DEFAULT_DEPENDENCIES: AnalysisDependencies = {
   fetchImage: fetchStreetViewImage,
-  adapters: { gemini: geminiAdapter },
+  adapters: { gemini: geminiAdapter, openai: openaiAdapter },
   catalog: CATALOG,
   deadlineMs: ANALYSIS_LIMITS.DEADLINE_MS,
   imageTimeoutMs: STREET_VIEW_LIMITS.FETCH_TIMEOUT_MS,
@@ -80,6 +81,7 @@ async function generate(prepared: PreparedAnalysis, image: ValidatedImage, signa
       prompt: ANALYSIS_PROMPT,
       schema: ANALYSIS_SCHEMA,
       maxOutputTokens: selected.model.maxOutputTokens,
+      reasoningEffort: selected.model.reasoningEffort,
       apiKey: credential.apiKey,
       signal,
     });

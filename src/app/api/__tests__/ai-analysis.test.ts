@@ -5,6 +5,7 @@ import { POST as startSession } from '../training/session/route';
 import { parseAnalysisResponse } from '@/lib/analysis/contract';
 import { resetTrainingAccessState } from '@/lib/server/training-access';
 import {
+  geminiKeyInvalid,
   geminiKeyOf,
   geminiStatus,
   geminiText,
@@ -12,6 +13,7 @@ import {
   isGemini,
   isStreetView,
   jsonRequest,
+  openaiText,
   rewriteStore,
   SAMPLE_ANALYSIS,
   sessionCookieFrom,
@@ -54,7 +56,7 @@ describe('POST /api/ai-analysis', () => {
 
     expect(response.status).toBe(200);
     expect(body.analysis).toEqual(SAMPLE_ANALYSIS);
-    expect(body.selection).toEqual({ provider: 'gemini', model: 'gemini-flash' });
+    expect(body.selection).toEqual({ provider: 'gemini', model: 'gemini-3.5-flash-lite' });
     expect(body.credentialSource).toBe('operator');
     expect(body).not.toHaveProperty('rawResponse');
     expect(parseAnalysisResponse(body)).not.toBeNull();
@@ -149,16 +151,17 @@ describe('POST /api/ai-analysis', () => {
     it('accepts the default entry by ID', async () => {
       useServerKeys();
       installFakeFetch(streetViewImage(), geminiText());
-      const response = await analyze({ ...VIEW, selection: { provider: 'gemini', model: 'gemini-flash' } });
+      const response = await analyze({ ...VIEW, selection: { provider: 'gemini', model: 'gemini-3.5-flash-lite' } });
       expect(response.status).toBe(200);
     });
 
     it.each([
       ['an unknown model', { provider: 'gemini', model: 'gemini-ultra-unlisted' }, 400, 'unknown_model'],
       ['an upstream model name', { provider: 'gemini', model: 'gemini-flash-latest' }, 400, 'unknown_model'],
-      ['an unknown provider', { provider: 'mistral', model: 'gemini-flash' }, 400, 'unknown_provider'],
-      ['a malformed selection', 'gemini-flash', 400, 'invalid_selection'],
-      ['a provider without an adapter', { provider: 'openai', model: 'gemini-flash' }, 503, 'provider_unavailable'],
+      ['an unknown provider', { provider: 'mistral', model: 'gemini-3.5-flash-lite' }, 400, 'unknown_provider'],
+      ['a malformed selection', 'gemini-3.5-flash-lite', 400, 'invalid_selection'],
+      ['a mismatched pair', { provider: 'openai', model: 'gemini-3.5-flash-lite' }, 400, 'selection_mismatch'],
+      ['OpenAI, which may not receive Street View imagery', { provider: 'openai', model: 'gpt-6-luna' }, 403, 'street_view_not_permitted'],
     ])('rejects %s before fetching the Street View image', async (_label, selection, status, code) => {
       useServerKeys();
       const { calls } = installFakeFetch(streetViewImage(), geminiText());
@@ -171,7 +174,7 @@ describe('POST /api/ai-analysis', () => {
   describe('participant keys', () => {
     const participant = (apiKey: string, provider = 'gemini') => ({
       ...VIEW,
-      selection: { provider: 'gemini', model: 'gemini-flash' },
+      selection: { provider: 'gemini', model: 'gemini-3.5-flash-lite' },
       participantKey: { provider, apiKey },
     });
 
@@ -199,7 +202,7 @@ describe('POST /api/ai-analysis', () => {
       useServerKeys();
       const warn = vi.spyOn(console, 'warn');
       const error = vi.spyOn(console, 'error');
-      const { calls } = installFakeFetch(streetViewImage(), geminiStatus(400));
+      const { calls } = installFakeFetch(streetViewImage(), geminiKeyInvalid());
 
       const response = await analyze(participant(SYNTHETIC.PARTICIPANT_GEMINI_KEY_A));
       const text = await response.text();
@@ -225,6 +228,20 @@ describe('POST /api/ai-analysis', () => {
       const response = await analyze(body);
       const text = await response.text();
       expect([response.status, JSON.parse(text).code]).toEqual([400, code]);
+      expect(text).not.toContain(SYNTHETIC.PARTICIPANT_OPENAI_KEY);
+      expect(calls).toHaveLength(0);
+    });
+
+    it('do not unlock Street View analysis for a provider not permitted to receive it', async () => {
+      useServerKeys();
+      const { calls } = installFakeFetch(streetViewImage(), openaiText());
+      const response = await analyze({
+        ...VIEW,
+        selection: { provider: 'openai', model: 'gpt-6-luna' },
+        participantKey: { provider: 'openai', apiKey: SYNTHETIC.PARTICIPANT_OPENAI_KEY },
+      });
+      const text = await response.text();
+      expect([response.status, JSON.parse(text).code]).toEqual([403, 'street_view_not_permitted']);
       expect(text).not.toContain(SYNTHETIC.PARTICIPANT_OPENAI_KEY);
       expect(calls).toHaveLength(0);
     });

@@ -88,6 +88,7 @@ export function installFakeFetch(...routes: FakeRoute[]) {
 
 export const isStreetView = (url: URL) => url.hostname === 'maps.googleapis.com' && url.pathname === '/maps/api/streetview';
 export const isGemini = (url: URL) => url.hostname === 'generativelanguage.googleapis.com';
+export const isOpenAI = (url: URL) => url.hostname === 'api.openai.com';
 
 export function streetViewImage(bytes: Uint8Array<ArrayBuffer> = syntheticJpeg(), contentType = 'image/jpeg'): FakeRoute {
   return (url) => (isStreetView(url) ? new Response(bytes, { status: 200, headers: { 'content-type': contentType } }) : undefined);
@@ -129,11 +130,78 @@ export function geminiStatus(status: number): FakeRoute {
       : undefined;
 }
 
+/** Gemini's report of an invalid key: 400 INVALID_ARGUMENT with an `API_KEY_INVALID` reason. */
+export function geminiKeyInvalid(): FakeRoute {
+  return (url) =>
+    isGemini(url)
+      ? Response.json(
+          {
+            error: {
+              code: 400,
+              message: 'upstream detail that must not leak',
+              status: 'INVALID_ARGUMENT',
+              details: [{ '@type': 'type.googleapis.com/google.rpc.ErrorInfo', reason: 'API_KEY_INVALID', domain: 'googleapis.com' }],
+            },
+          },
+          { status: 400 }
+        )
+      : undefined;
+}
+
 export function geminiBlocked(): FakeRoute {
   return (url) =>
     isGemini(url)
       ? Response.json({ promptFeedback: { blockReason: 'SAFETY', safetyRatings: [] } })
       : undefined;
+}
+
+/** A Responses API result with the given message content, status and incomplete reason. */
+export function openaiResponse(
+  content: Record<string, unknown>[] = [{ type: 'output_text', text: SAMPLE_ANALYSIS_JSON, annotations: [] }],
+  status = 'completed',
+  incompleteReason?: string
+) {
+  return {
+    id: 'resp_synthetic',
+    object: 'response',
+    created_at: 0,
+    status,
+    incomplete_details: incompleteReason ? { reason: incompleteReason } : null,
+    model: 'synthetic-openai-model',
+    output: [
+      { id: 'rs_synthetic', type: 'reasoning', summary: [] },
+      { id: 'msg_synthetic', type: 'message', role: 'assistant', status: 'completed', content },
+    ],
+  };
+}
+
+/** An OpenAI reply whose output text is `text` (the sample analysis as JSON by default). */
+export function openaiText(text: string = SAMPLE_ANALYSIS_JSON): FakeRoute {
+  return (url) => (isOpenAI(url) ? Response.json(openaiResponse([{ type: 'output_text', text, annotations: [] }])) : undefined);
+}
+
+export function openaiRefusal(): FakeRoute {
+  return (url) => (isOpenAI(url) ? Response.json(openaiResponse([{ type: 'refusal', refusal: 'upstream detail that must not leak' }])) : undefined);
+}
+
+export function openaiIncomplete(reason: string): FakeRoute {
+  return (url) =>
+    isOpenAI(url)
+      ? Response.json(openaiResponse([{ type: 'output_text', text: '{"textAndSigns": "cut off', annotations: [] }], 'incomplete', reason))
+      : undefined;
+}
+
+export function openaiStatus(status: number, code: string | null = null): FakeRoute {
+  return (url) =>
+    isOpenAI(url)
+      ? Response.json({ error: { message: 'upstream detail that must not leak', type: 'error', param: null, code } }, { status })
+      : undefined;
+}
+
+/** The key a fake OpenAI request was sent with. */
+export function openaiKeyOf(call: RecordedCall): string | null {
+  const header = new Headers(call.init?.headers).get('authorization');
+  return header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -210,8 +278,8 @@ export function catalogModel(overrides: Partial<CatalogModel> & Pick<CatalogMode
 /** Two enabled providers with several entries, including ones that must never be listed. */
 export const TWO_PROVIDER_CATALOG: Catalog = {
   providers: [
-    { id: 'gemini', label: 'Gemini', enabled: true, credentialField: 'geminiApiKey', participantKeys: true },
-    { id: 'openai', label: 'OpenAI', enabled: true, credentialField: 'openaiApiKey', participantKeys: true },
+    { id: 'gemini', label: 'Gemini', enabled: true, credentialField: 'geminiApiKey', participantKeys: true, streetViewImagery: true },
+    { id: 'openai', label: 'OpenAI', enabled: true, credentialField: 'openaiApiKey', participantKeys: true, streetViewImagery: true },
   ],
   models: [
     catalogModel({ id: 'gem-default', provider: 'gemini', default: true }),

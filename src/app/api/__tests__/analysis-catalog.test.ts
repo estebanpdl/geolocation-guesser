@@ -12,7 +12,7 @@ async function catalog() {
 }
 
 describe('GET /api/analysis/catalog', () => {
-  it('lists the Gemini default and no credential values, without external calls', async () => {
+  it('lists both providers, their defaults and no credential values, without external calls', async () => {
     vi.stubEnv('GOOGLE_GENERATIVE_AI_KEY', SYNTHETIC.GEMINI_KEY);
     vi.stubEnv('GOOGLE_MAPS_API_KEY', SYNTHETIC.MAPS_SERVER_KEY);
     const { calls } = installFakeFetch();
@@ -25,13 +25,27 @@ describe('GET /api/analysis/catalog', () => {
           label: 'Gemini',
           operatorCredentials: true,
           participantKeys: true,
-          models: [{ id: 'gemini-flash', label: 'Gemini Flash', workflows: ['scene', 'photo'], default: true }],
+          models: [
+            { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash-Lite', workflows: ['scene', 'photo'], default: true },
+            { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash', workflows: ['scene', 'photo'], default: false },
+          ],
+        },
+        {
+          id: 'openai',
+          label: 'OpenAI',
+          operatorCredentials: false,
+          participantKeys: true,
+          models: [
+            { id: 'gpt-6-luna', label: 'GPT-6 Luna', workflows: ['photo'], default: true },
+            { id: 'gpt-6.1-terra', label: 'GPT-6.1 Terra', workflows: ['photo'], default: false },
+          ],
         },
       ],
-      defaultSelection: { provider: 'gemini', model: 'gemini-flash' },
+      defaultSelection: { provider: 'gemini', model: 'gemini-3.5-flash-lite' },
     });
     expect(text).not.toMatch(/synthetic-/);
-    expect(text).not.toContain('gemini-flash-latest');
+    expect(text).not.toContain('upstreamModel');
+    expect(text).not.toContain('reasoningEffort');
     expect(calls).toHaveLength(0);
   });
 

@@ -4,11 +4,12 @@ import type { ProviderId } from '@/lib/analysis/contract';
 import { parseOutput, runPhotoAnalysis, runSceneAnalysis, type AnalysisDependencies, type AnalysisOptions } from '../analysis';
 import { ANALYSIS_PROMPT, ANALYSIS_SCHEMA } from '../analysis-prompt';
 import { ApiError } from '../api-error';
+import type { Catalog } from '../catalog';
 import { emptyStore } from '../credential-store';
 import { validateImageBytes } from '../image';
 import type { GenerationRequest, GenerationResult, ProviderAdapter } from '../providers/types';
 import { resolveServerConfig } from '../server-config';
-import { SAMPLE_ANALYSIS, SAMPLE_ANALYSIS_JSON, SYNTHETIC, syntheticJpeg, TWO_PROVIDER_CATALOG } from '@/test/fakes';
+import { catalogModel, SAMPLE_ANALYSIS, SAMPLE_ANALYSIS_JSON, SYNTHETIC, syntheticJpeg, TWO_PROVIDER_CATALOG } from '@/test/fakes';
 
 const view = { lat: 10, lng: 20, heading: 0, pitch: 0 };
 const image = validateImageBytes(syntheticJpeg(), 'image/jpeg');
@@ -107,6 +108,46 @@ describe('runSceneAnalysis', () => {
     const err = await failure(runSceneAnalysis(view, {}, config(), undefined, d));
     expect([err.status, err.code]).toEqual([503, 'provider_unavailable']);
     expect(d.fetchImage).not.toHaveBeenCalled();
+  });
+
+  describe('Street View imagery permission', () => {
+    const sceneCatalog = (streetViewImagery: boolean): Catalog => ({
+      ...TWO_PROVIDER_CATALOG,
+      providers: TWO_PROVIDER_CATALOG.providers.map((p) => (p.id === 'openai' ? { ...p, streetViewImagery } : p)),
+      models: [
+        ...TWO_PROVIDER_CATALOG.models,
+        catalogModel({ id: 'oa-scene', provider: 'openai', reasoningEffort: 'low' }),
+      ],
+    });
+    const openaiScene = { selection: { provider: 'openai', model: 'oa-scene' } };
+    const openaiEnv = { ...OPERATOR_ENV, OPENAI_API_KEY: SYNTHETIC.OPENAI_KEY };
+
+    it('refuses a scene for a provider not permitted to receive Street View imagery, before fetching it', async () => {
+      const d = deps({ catalog: sceneCatalog(false) });
+      const err = await failure(runSceneAnalysis(view, openaiScene, config(openaiEnv), undefined, d));
+      expect([err.status, err.code]).toEqual([403, 'street_view_not_permitted']);
+      expect(d.fetchImage).not.toHaveBeenCalled();
+      expect(d.openai.generate).not.toHaveBeenCalled();
+    });
+
+    it('still analyzes photos with that provider', async () => {
+      const d = deps({ catalog: sceneCatalog(false) });
+      const outcome = await runPhotoAnalysis(image, openaiScene, config(openaiEnv), undefined, d);
+      expect(outcome.selection).toEqual({ provider: 'openai', model: 'oa-scene' });
+      expect(d.openai.generate).toHaveBeenCalledTimes(1);
+    });
+
+    it('sends the same fetched image bytes to whichever provider is selected once permitted', async () => {
+      const d = deps({ catalog: sceneCatalog(true) });
+      await runSceneAnalysis(view, openaiScene, config(openaiEnv), undefined, d);
+      await runSceneAnalysis(view, {}, config(openaiEnv), undefined, d);
+
+      expect(d.fetchImage).toHaveBeenCalledTimes(2);
+      const sent = [d.openai, d.gemini].map((a) => (a.generate.mock.calls[0][0] as GenerationRequest));
+      expect(sent.map((r) => r.image)).toEqual([image, image]);
+      expect(sent.map((r) => r.reasoningEffort)).toEqual(['low', undefined]);
+      expect(keyOf(d.openai)).toBe(SYNTHETIC.OPENAI_KEY);
+    });
   });
 
   it('uses a participant key for inference while the image still uses the server key', async () => {
