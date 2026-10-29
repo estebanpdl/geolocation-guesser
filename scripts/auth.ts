@@ -66,6 +66,7 @@ Commands:
   training open                 Require the access code for AI analysis
   training close                Block AI analysis for everyone
   training off                  Local use: AI analysis needs no access code
+  training unlock               Clear the wrong-code limits for every client; sessions keep working
 
 Saved settings live in ~/.geolocation-guesser/credentials.json, or in the absolute path set by
 ${STORE_PATH_ENV}.
@@ -74,7 +75,7 @@ Environment variables, from this shell or the project's .env files, override sav
 ${Object.values(CREDENTIAL_ENV).join(', ')}, ${TRAINING_ENV.MODE}, ${TRAINING_ENV.ACCESS_CODE}.
 A saved "closed" training mode overrides ${TRAINING_ENV.MODE}. Training changes that an
 environment value would override are refused. Changes apply to a running server on its next
-request. Rotating the code ends existing training sessions.`;
+request. Rotating the code ends existing training sessions and also clears the wrong-code limits.`;
 
 export async function runAuth(args: string[], io: AuthIO): Promise<number> {
   const [command = 'status', subject, ...rest] = args;
@@ -222,6 +223,8 @@ async function training(io: AuthIO, action: string | undefined): Promise<number>
     case 'close':
     case 'off':
       return setTrainingMode(io, action === 'close' ? 'closed' : action);
+    case 'unlock':
+      return unlockAttempts(io);
     default:
       return usageError(io);
   }
@@ -303,6 +306,17 @@ async function setTrainingMode(io: AuthIO, mode: TrainingMode): Promise<number> 
   if (mode === 'open' && effective.some(({ config }) => !config.training.accessCode)) {
     io.out('Warning: no usable access code is configured, so AI analysis stays blocked. Run: npm run auth -- training rotate');
   }
+  return 0;
+}
+
+/** Saves a new reset marker; the server clears its attempt counters when it sees the change. */
+async function unlockAttempts(io: AuthIO): Promise<number> {
+  const envs = loadServerEnvs(io.projectDir, io.env);
+  const store = await loadForUpdate(envs);
+  store.data.training.attemptsResetAt = new Date().toISOString();
+  await writeStore(store.path, store.data);
+  io.out('Cleared the wrong-code limits for every client address. Existing sessions keep working.');
+  io.out('A running server applies this at the next code entry.');
   return 0;
 }
 

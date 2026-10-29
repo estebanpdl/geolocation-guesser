@@ -26,7 +26,12 @@ export type TrainingMode = (typeof TRAINING_MODES)[number];
 export interface StoreData {
   version: 1;
   credentials: Partial<Record<CredentialField, string>>;
-  training: { mode?: TrainingMode; accessCode?: string };
+  training: {
+    mode?: TrainingMode;
+    accessCode?: string;
+    /** When the operator last cleared the wrong-code limits (ISO 8601); a new value clears them on the server. */
+    attemptsResetAt?: string;
+  };
 }
 
 export type StoreReadResult =
@@ -124,6 +129,10 @@ export function parseStoreData(value: unknown): StoreData {
   if (training.accessCode !== undefined) {
     if (!isStorableValue(training.accessCode)) throw new CredentialStoreError('Unsupported credential store format.');
     data.training.accessCode = training.accessCode;
+  }
+  if (training.attemptsResetAt !== undefined) {
+    if (!isStorableValue(training.attemptsResetAt)) throw new CredentialStoreError('Unsupported credential store format.');
+    data.training.attemptsResetAt = training.attemptsResetAt;
   }
   return data;
 }

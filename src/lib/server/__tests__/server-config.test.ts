@@ -82,6 +82,7 @@ describe('credential store file', () => {
     ['non-string value', JSON.stringify({ version: 1, credentials: { geminiApiKey: 5 } })],
     ['multi-line value', JSON.stringify({ version: 1, credentials: { geminiApiKey: 'a\nb' } })],
     ['unknown mode', JSON.stringify({ version: 1, training: { mode: 'public' } })],
+    ['non-string reset marker', JSON.stringify({ version: 1, training: { attemptsResetAt: 5 } })],
   ])('reports a %s store as invalid', async (_label, content) => {
     const storePath = await useSyntheticStore(content);
     expect((await readStore(storePath)).status).toBe('invalid');
@@ -190,6 +191,25 @@ describe('resolveServerConfig precedence', () => {
       expect.arrayContaining(['training_access_code_invalid', 'training_access_code_missing', 'training_session_ttl_invalid'])
     );
   });
+
+  it('reads trusted proxy hops from the environment, 0 to 3', () => {
+    expect(resolveServerConfig({}, store()).trustedProxyHops).toBe(0);
+    for (const hops of ['0', '1', '3', ' 2 ']) {
+      const config = resolveServerConfig({ TRUSTED_PROXY_HOPS: hops }, store());
+      expect([config.trustedProxyHops, config.problems]).toEqual([Number(hops), []]);
+    }
+    for (const hops of ['4', '10', '-1', '1.5', 'one']) {
+      const config = resolveServerConfig({ TRUSTED_PROXY_HOPS: hops }, store());
+      expect([config.trustedProxyHops, config.problems]).toEqual([0, ['trusted_proxy_hops_invalid']]);
+    }
+  });
+
+  it('takes the attempt-limit reset marker from a usable store only', () => {
+    const marker = '2026-10-29T10:00:00.000Z';
+    expect(resolveServerConfig({}, store({ training: { attemptsResetAt: marker } })).training.attemptsResetAt).toBe(marker);
+    expect(resolveServerConfig({}, store()).training.attemptsResetAt).toBeNull();
+    expect(resolveServerConfig({}, store({ training: { attemptsResetAt: marker } }, 'invalid')).training.attemptsResetAt).toBeNull();
+  });
 });
 
 describe('access codes', () => {
@@ -215,6 +235,7 @@ describe('describeServerConfig', () => {
     expect(text).toContain('Street View server key: configured (credential store)');
     expect(text).toContain('OpenAI API key: not configured');
     expect(text).toContain('Training mode: open (environment)');
+    expect(text).toContain('Trusted proxy hops: 0');
     for (const secret of [SYNTHETIC.GEMINI_KEY, SYNTHETIC.MAPS_SERVER_KEY, SYNTHETIC.ACCESS_CODE, normalizeAccessCode(SYNTHETIC.ACCESS_CODE)]) {
       expect(text).not.toContain(secret);
     }

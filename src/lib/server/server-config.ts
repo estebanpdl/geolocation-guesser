@@ -37,6 +37,10 @@ export const TRAINING_ENV = {
   SESSION_TTL_MINUTES: 'TRAINING_SESSION_TTL_MINUTES',
 } as const;
 
+/** Proxies in front of the server that append to X-Forwarded-For (a tunnel or reverse proxy); 0 without one. */
+export const TRUSTED_PROXY_HOPS_ENV = 'TRUSTED_PROXY_HOPS';
+export const TRUSTED_PROXY_HOPS_MAX = 3;
+
 export const ACCESS_CODE_MIN_LENGTH = 8;
 export const ACCESS_CODE_MAX_LENGTH = 128;
 export const SESSION_TTL_DEFAULT_MINUTES = 180;
@@ -62,7 +66,10 @@ export interface ServerConfig {
     /** Normalized access code; null when unset or unusable. */
     accessCode: ResolvedValue | null;
     sessionTtlMinutes: number;
+    /** Changes when the operator clears the wrong-code limits; null if never cleared. */
+    attemptsResetAt: string | null;
   };
+  trustedProxyHops: number;
   /** Safe problem codes for status output; never contain values. */
   problems: string[];
 }
@@ -164,12 +171,22 @@ export function resolveServerConfig(env: Env, store: { status: StoreStatus; path
     if (parsed >= SESSION_TTL_MIN_MINUTES && parsed <= SESSION_TTL_MAX_MINUTES) sessionTtlMinutes = parsed;
     else problems.push('training_session_ttl_invalid');
   }
+  const attemptsResetAt = storeUsable ? (store.data.training.attemptsResetAt ?? null) : null;
+
+  let trustedProxyHops = 0;
+  const rawHops = env[TRUSTED_PROXY_HOPS_ENV]?.trim();
+  if (rawHops) {
+    const parsed = /^\d$/.test(rawHops) ? Number(rawHops) : NaN;
+    if (parsed <= TRUSTED_PROXY_HOPS_MAX) trustedProxyHops = parsed;
+    else problems.push('trusted_proxy_hops_invalid');
+  }
 
   return {
     storePath: store.path,
     storeStatus: store.status,
     credentials,
-    training: { mode, modeSource, accessCode, sessionTtlMinutes },
+    training: { mode, modeSource, accessCode, sessionTtlMinutes, attemptsResetAt },
+    trustedProxyHops,
     problems,
   };
 }
@@ -234,6 +251,7 @@ const PROBLEM_TEXT: Record<string, string> = {
   training_access_code_invalid: `The training access code must have ${ACCESS_CODE_MIN_LENGTH}-${ACCESS_CODE_MAX_LENGTH} characters (ignoring spaces and hyphens).`,
   training_access_code_missing: 'Training is open but no usable access code is configured; analysis requests are refused.',
   training_session_ttl_invalid: `${TRAINING_ENV.SESSION_TTL_MINUTES} must be a whole number of minutes from ${SESSION_TTL_MIN_MINUTES} to ${SESSION_TTL_MAX_MINUTES}; the default is used.`,
+  trusted_proxy_hops_invalid: `${TRUSTED_PROXY_HOPS_ENV} must be a whole number from 0 to ${TRUSTED_PROXY_HOPS_MAX}; 0 (no proxy) is used.`,
 };
 
 /** Human-readable status lines that state only whether settings exist and where they come from. */
@@ -257,6 +275,7 @@ export function describeServerConfig(config: ServerConfig): string[] {
   lines.push(`Training mode: ${training.mode} (${modeOrigin})`);
   lines.push(`Training access code: ${training.accessCode ? `configured (${SOURCE_LABELS[training.accessCode.source]})` : 'not configured'}`);
   lines.push(`Training session lifetime: ${training.sessionTtlMinutes} minutes`);
+  lines.push(`Trusted proxy hops: ${config.trustedProxyHops}`);
 
   for (const problem of config.problems) {
     lines.push(`Problem: ${PROBLEM_TEXT[problem] ?? problem}`);

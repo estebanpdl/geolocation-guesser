@@ -9,6 +9,7 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { NextRequest, NextResponse } from 'next/server';
 import { ApiError } from './api-error';
+import { clientAddress } from './client-address';
 import {
   ACCESS_CODE_MAX_LENGTH,
   normalizeAccessCode,
@@ -18,13 +19,17 @@ import {
 export const SESSION_COOKIE = 'gg_training_session';
 
 export const ATTEMPT_LIMITS = {
-  /** Failed code entries allowed per client address within the window. */
-  CLIENT_FAILURES: 5,
-  CLIENT_WINDOW_MS: 10 * 60_000,
   /**
-   * Failed code entries allowed across all clients within the window. Client
-   * addresses come from a header the client can set, so this bound is the one
-   * that holds against address spoofing.
+   * Wrong codes one client address can enter at once. A room on shared Wi-Fi
+   * often reaches the server from a single address, so this absorbs a room's
+   * typos instead of locking everyone out.
+   */
+  CLIENT_BURST: 20,
+  /** After the burst, each address regains one wrong-code attempt per interval. */
+  CLIENT_REFILL_MS: 15_000,
+  /**
+   * Failed code entries allowed across all clients within the window. This bound
+   * holds even when client addresses are forged or not attributable.
    */
   HOST_FAILURES: 30,
   HOST_WINDOW_MS: 60_000,
@@ -44,8 +49,11 @@ interface FailureWindow {
 interface TrainingAccessState {
   secret: Buffer;
   sessions: Map<string, TrainingSession>;
-  clientFailures: Map<string, FailureWindow>;
+  /** Per address: when its wrong-code allowance is fully restored. */
+  clientRestoredAt: Map<string, number>;
   hostFailures: FailureWindow;
+  /** The access code and operator reset the attempt counters belong to. */
+  attemptsEpoch: Buffer | null;
 }
 
 const STATE_KEY = Symbol.for('geolocation-guesser.training-access');
@@ -55,8 +63,9 @@ function newState(): TrainingAccessState {
   return {
     secret: randomBytes(32),
     sessions: new Map(),
-    clientFailures: new Map(),
+    clientRestoredAt: new Map(),
     hostFailures: { count: 0, resetAt: 0 },
+    attemptsEpoch: null,
   };
 }
 
@@ -110,22 +119,34 @@ export function checkTrainingAccess(request: NextRequest, config: ServerConfig, 
   return { mode: 'open', expiresAt: session.expiresAt };
 }
 
-function clientKey(request: NextRequest): string {
-  return (request.headers.get('x-forwarded-for') ?? 'unknown').slice(0, 64);
-}
-
 function retryAfterSeconds(resetAt: number, now: number): number {
   return Math.max(1, Math.ceil((resetAt - now) / 1000));
 }
+
+/**
+ * Attempt counters apply to one access code and one operator reset. A new code
+ * (rotation) or `auth training unlock` starts them afresh; sessions are untouched.
+ */
+function syncAttemptsEpoch(config: ServerConfig, accessCode: string): void {
+  const s = state();
+  const epoch = fingerprint(`${accessCode}\n${config.training.attemptsResetAt ?? ''}`);
+  if (s.attemptsEpoch && s.attemptsEpoch.equals(epoch)) return;
+  s.attemptsEpoch = epoch;
+  s.clientRestoredAt.clear();
+  s.hostFailures = { count: 0, resetAt: 0 };
+}
+
+/** The burst is spent once restoring the allowance would take longer than the burst minus one attempt. */
+const CLIENT_BURST_SPAN_MS = (ATTEMPT_LIMITS.CLIENT_BURST - 1) * ATTEMPT_LIMITS.CLIENT_REFILL_MS;
 
 function assertNotThrottled(key: string, now: number): void {
   const s = state();
   if (s.hostFailures.resetAt > now && s.hostFailures.count >= ATTEMPT_LIMITS.HOST_FAILURES) {
     throw tooManyAttempts(retryAfterSeconds(s.hostFailures.resetAt, now));
   }
-  const client = s.clientFailures.get(key);
-  if (client && client.resetAt > now && client.count >= ATTEMPT_LIMITS.CLIENT_FAILURES) {
-    throw tooManyAttempts(retryAfterSeconds(client.resetAt, now));
+  const restoredAt = s.clientRestoredAt.get(key);
+  if (restoredAt !== undefined && restoredAt - now > CLIENT_BURST_SPAN_MS) {
+    throw tooManyAttempts(retryAfterSeconds(restoredAt - CLIENT_BURST_SPAN_MS, now));
   }
 }
 
@@ -140,12 +161,11 @@ function recordFailure(key: string, now: number): void {
   if (s.hostFailures.resetAt <= now) s.hostFailures = { count: 0, resetAt: now + ATTEMPT_LIMITS.HOST_WINDOW_MS };
   s.hostFailures.count++;
 
-  for (const [entryKey, entry] of s.clientFailures) {
-    if (entry.resetAt <= now) s.clientFailures.delete(entryKey);
+  for (const [entryKey, restoredAt] of s.clientRestoredAt) {
+    if (restoredAt <= now) s.clientRestoredAt.delete(entryKey);
   }
-  const client = s.clientFailures.get(key) ?? { count: 0, resetAt: now + ATTEMPT_LIMITS.CLIENT_WINDOW_MS };
-  client.count++;
-  s.clientFailures.set(key, client);
+  const restoredAt = Math.max(s.clientRestoredAt.get(key) ?? now, now);
+  s.clientRestoredAt.set(key, restoredAt + ATTEMPT_LIMITS.CLIENT_REFILL_MS);
 }
 
 /** Exchanges an access code for a new session. The code itself is never stored or logged. */
@@ -169,7 +189,8 @@ export function startTrainingSession(
     throw new ApiError(400, 'invalid_access_code_format', 'Enter the access code provided for this training.');
   }
 
-  const key = clientKey(request);
+  syncAttemptsEpoch(config, accessCode.value);
+  const key = clientAddress(request.headers, config.trustedProxyHops);
   assertNotThrottled(key, now);
 
   if (!timingSafeEqual(fingerprint(normalizeAccessCode(code)), fingerprint(accessCode.value))) {
