@@ -32,6 +32,7 @@ credentials behind an access code.
 - [Participant keys](#participant-keys)
 - [Training sessions](#training-sessions)
 - [Costs and public hosting](#costs-and-public-hosting)
+- [Run a workshop over a tunnel](#run-a-workshop-over-a-tunnel)
 - [Browser history](#browser-history)
 - [Development](#development)
 - [Known limitations](#known-limitations)
@@ -113,6 +114,7 @@ Then fill in the values you need. Placeholder values from the template count as 
 | `OPENAI_API_KEY` | Server | OpenAI API key. |
 | `TRAINING_MODE`, `TRAINING_ACCESS_CODE`, `TRAINING_SESSION_TTL_MINUTES` | Server | See [Training sessions](#training-sessions). |
 | `GEOLOCATION_GUESSER_CREDENTIALS_FILE` | Server | Optional absolute path for the credential store. |
+| `TRUSTED_PROXY_HOPS` | Server | Proxies in front of the server, 0–3 (default 0). See [Code attempts](#code-attempts). |
 
 ### Use separate, restricted keys
 
@@ -138,6 +140,7 @@ needed at build time.
 | `npm run dev` | Development server at <http://localhost:3000>. |
 | `npm run build` | Production build. Set `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` first: it is embedded at this step. |
 | `npm run start` | Serves the production build (`next start`, port 3000 by default; `npm run start -- -p 8080` to change it). |
+| `npm run start:tunnel` | Serves the production build on `127.0.0.1` only, for use behind a tunnel on the same machine. |
 
 Settings saved with `npm run auth` reach a running server on its next request. Changes to `.env*` files take effect
 when the server restarts. Neither needs a rebuild, except the browser key.
@@ -158,6 +161,7 @@ npm run auth -- training close        # block AI analysis for everyone
 npm run auth -- training off          # local use: no access code
 npm run auth -- training rotate       # generate a new access code and show it once
 npm run auth -- training code         # enter your own access code at a masked prompt
+npm run auth -- training unlock       # clear the wrong-code limits; sessions keep working
 npm run auth -- help
 ```
 
@@ -306,22 +310,58 @@ How it works:
 - **Sessions:** a correct code starts a server-checked session, held in a `gg_training_session` cookie (HttpOnly,
   SameSite=Strict, Secure over HTTPS). Sessions expire after `TRAINING_SESSION_TTL_MINUTES`: 180 by default,
   5 to 1,440 allowed.
-- **Code attempts are bounded:** 5 wrong codes per client address in 10 minutes, and 30 wrong codes across all
-  clients per minute. Further attempts get 429 until the window passes. The client address comes from the
-  `X-Forwarded-For` header, which a client can forge, so the host-wide bound is the one that holds. Without a proxy
-  that sets it, all clients share one address and one 5-attempt allowance.
+- **Code attempts are bounded.** See [Code attempts](#code-attempts).
 - **Rotating** the code ends every existing session. **Closing** blocks new analyses immediately. Both apply to a
   running server on its next request.
 - The `/training` link appears in the page headers while training is open, and after an analysis is refused for lack
   of a session.
+
+### Code attempts
+
+Wrong codes are limited per client address and across the whole server:
+
+- **Per address:** 20 wrong codes at once, then one more every 15 seconds. A room on shared Wi-Fi often reaches the
+  server from a single address, so the allowance is sized for a room's typos. Once it is used up, that address waits
+  at most 15 seconds before its next attempt.
+- **Across all clients:** 30 wrong codes per minute.
+- While a limit applies, the code entries it covers get 429 with a `Retry-After`, even the right code.
+  Sessions that already exist keep working.
+
+**Clear a lockout without a restart:**
+
+```sh
+npm run auth -- training unlock
+```
+
+It resets both limits for every address and leaves sessions alone. The server applies it at the next code entry.
+Rotating the code also resets the limits, but it ends every session. Restarting the server works too, and also ends
+every session.
+
+**Where the client address comes from.** Route handlers do not see the connection address. `next start` copies it
+into the `X-Forwarded-For` header, but only when the request has no such header. A client that sends its own header
+chooses its address and gets a fresh allowance, so the 30-per-minute bound is the one that holds against forged
+addresses. Set `TRUSTED_PROXY_HOPS` to the number of proxies in front of the server that **append** to
+`X-Forwarded-For`:
+
+| `TRUSTED_PROXY_HOPS` | Client address used |
+|---|---|
+| `0` (default) | The whole header: the connection address if the client sent none, otherwise the client's own value. |
+| `1` | The last entry, which the one proxy appended (for example ngrok). Earlier entries are ignored. |
+| `2`, `3` | The 2nd or 3rd entry from the end, for a chain of proxies. |
+
+If the header has fewer entries than that, or the entry is not an IP address, the request counts against one
+shared allowance. Never set it higher than the real number of proxies: clients could then choose their address
+again. `npm run auth -- status` shows the value in use.
 
 ### Running a public session
 
 1. Configure server keys (`npm run auth -- set gemini`, and so on) and build with your restricted browser key.
 2. `npm run auth -- training rotate`, and note the code.
 3. `npm run auth -- training open`.
-4. Run **one** `npm run start` process behind an HTTPS reverse proxy. The proxy should set `X-Forwarded-Proto` and
-   overwrite `X-Forwarded-For`.
+4. Run **one** `npm run start` process behind an HTTPS reverse proxy. The proxy should set `X-Forwarded-Proto`. If
+   it sets or appends the client address in `X-Forwarded-For`, set `TRUSTED_PROXY_HOPS=1` (see
+   [Code attempts](#code-attempts)) and make sure only the proxy can reach the server's port. To run behind
+   ngrok on your own machine, follow [Run a workshop over a tunnel](#run-a-workshop-over-a-tunnel) instead.
 5. Share the site address and the code with participants.
 6. When you are done: `npm run auth -- training close`. Switch to `training off` only once the server can no longer
    be reached by others (for example, back on `localhost` only).
@@ -355,6 +395,136 @@ This repository is public. If you host it for others, this is what that means:
   - keep the host private or behind your own access control when no session is running;
   - close training when a session ends;
   - rotate the code if it leaks.
+
+## Run a workshop over a tunnel
+
+For a workshop you can serve the app from your own laptop through [ngrok](https://ngrok.com), on a free account and
+its fixed dev domain. A tunnel puts the server on your laptop on the public internet. Everything in
+[Costs and public hosting](#costs-and-public-hosting) applies, and so does the warning at the top of this README.
+
+> [!WARNING]
+> **The training access code is the only gate.** While the tunnel runs:
+>
+> - **Anyone with the URL** can load the game pages, which use your Maps browser key, and can reach the server.
+> - **Only AI analysis needs the code.** The code controls who can analyze, not how much.
+> - **The URL does not change.** The free dev domain is fixed, so a URL that leaks once stays valid for every later
+>   workshop.
+>
+> To limit this:
+>
+> - run ngrok only during the workshop, and stop it first at the end;
+> - rotate the code for every workshop;
+> - restrict the Maps browser key to the exact dev domain;
+> - optionally, set spend limits with your providers on your own keys.
+
+### Once
+
+1. Use a Node.js 22 release with current security fixes and dependencies with current Next.js security releases.
+   See [Requirements](#requirements) and [Known limitations](#known-limitations).
+2. Install ngrok on Windows:
+   - from the Microsoft Store, which ngrok recommends;
+   - or with `winget install ngrok -s msstore`;
+   - or as the standalone zip from <https://ngrok.com/download>.
+3. Create a free ngrok account and save its authtoken in ngrok's own configuration:
+
+   ```powershell
+   ngrok config add-authtoken <your-authtoken>
+   ngrok config check    # shows where the configuration file is
+   ```
+
+   By default the file is `%LOCALAPPDATA%\ngrok\ngrok.yml`. Never put the authtoken in this repository or in a
+   `.env*` file.
+4. Note your **dev domain** in the ngrok dashboard. The free plan assigns one fixed domain per account, such as
+   `your-name.ngrok-free.app`. Some ngrok pages show `.ngrok-free.dev` instead, so use exactly what your dashboard
+   shows.
+5. In Google Cloud, add exactly `https://<dev-domain>/*` to the **browser key's** HTTP referrer restrictions, and keep
+   your existing entries. **Never add a wildcard such as `*.ngrok-free.app/*`:** it would let every other ngrok
+   site use your key. This needs no rebuild. The restriction stops other sites from using your key; it does not stop
+   visitors to your dev domain.
+6. Optionally, set budgets and billing alerts with your providers (see
+   [Costs and public hosting](#costs-and-public-hosting)).
+7. Add `TRUSTED_PROXY_HOPS=1` to `.env.local`. ngrok appends the address it sees to `X-Forwarded-For`, and with
+   this setting the server uses that last entry to limit wrong codes per participant address (see
+   [Code attempts](#code-attempts)). It is safe only because `npm run start:tunnel` listens on `127.0.0.1`: other
+   machines cannot connect directly and send their own header.
+
+### Before each workshop
+
+1. `npm run build`, with the browser key set.
+2. `npm run auth -- training rotate`, and note the code. It is shown only once. Use a generated code rather than one
+   you make up: with about 79 bits, it cannot realistically be guessed within the
+   [code attempt limits](#code-attempts).
+3. `npm run auth -- training open`.
+4. Plug the laptop in and turn off sleep. Sleep suspends both the server and the tunnel.
+5. `npm run auth -- status` should show training `open`, an access code configured and `Trusted proxy hops: 1`.
+
+### Start
+
+In one terminal, start the server on `127.0.0.1` only:
+
+```sh
+npm run start:tunnel
+```
+
+In a second terminal, start the tunnel:
+
+```sh
+ngrok http 127.0.0.1:3000 --url https://<dev-domain>
+```
+
+Give the address as `127.0.0.1:3000`, not just `3000`. A bare port forwards to `localhost`, which can resolve to the
+IPv6 address `::1`, where the server is not listening.
+
+**Test from a phone on mobile data**, not on the workshop Wi-Fi:
+
+1. Open the URL and click through ngrok's warning page.
+2. Enter the training code at `/training` and run one analysis.
+3. On the laptop, open ngrok's inspector at <http://localhost:4040>. The request's `X-Forwarded-For` should end with
+   the phone's public address: that is the address the server uses.
+
+Before the first workshop, do this as a full dry run with two of your own devices, then check the request count in
+the ngrok dashboard.
+
+### What participants see
+
+1. **ngrok's warning page** (free plan only). They click **Visit** once; a cookie hides the page on that device for
+   7 days.
+2. **The app.** They can play right away. To use AI analysis, they enter the training code at `/training`.
+
+Share the URL (a QR code works) and the training code.
+
+During the workshop:
+
+- If participants get "Too many incorrect access codes", run `npm run auth -- training unlock`. Sessions keep working.
+- If the code leaks beyond the room, run `npm run auth -- training rotate` and share the new code. Every participant
+  enters it again.
+- If the network drops, ngrok reconnects on its own and the URL stays the same, so participants just reload.
+- Restarting ngrok keeps every training session. Restarting the server ends them all, and everyone enters the code
+  again.
+
+### Free plan limits
+
+- The free plan allows 20,000 HTTP requests and 1 GB of outgoing data per month, and one dev domain.
+- Maps and panoramas load straight from Google and do not cross the tunnel. Pages, scripts and API calls do,
+  including requests from anyone else who opens the URL.
+- **Rough estimate (not measured):** 150–300 requests per participant for a two-hour workshop, so 6,000–12,000 for
+  40 people. Check the actual count after your dry run.
+- ngrok does not document what happens when a free account reaches its limit. Plan as if the tunnel stops
+  mid-workshop.
+- **Move to a paid plan** when one workshop uses a large share of the monthly quota, when you run workshops
+  regularly, or when you want to remove the warning page. Paid plans raise the limits and drop the warning page;
+  see ngrok's pricing page.
+
+### At the end: stop ngrok first, then close training
+
+1. Stop ngrok (Ctrl+C in its terminal). The site is no longer reachable.
+2. `npm run auth -- training close`.
+3. Stop the server.
+4. Check your provider billing and the ngrok usage page.
+
+Do not keep the tunnel running and rely on `closed`: AI analysis would be blocked, but anyone with the URL could still
+load the game pages and bill your Maps key. **Never leave the tunnel running in `off` mode:** anyone with the URL
+could run AI analyses on your keys without a code.
 
 ## Browser history
 
