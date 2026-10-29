@@ -52,8 +52,8 @@ export interface Catalog {
 }
 
 /**
- * Upstream names are pinned stable model IDs, not "latest" aliases, so a listed
- * entry cannot change model underneath the catalog. Each entry's image input and
+ * Upstream names use explicit model IDs rather than "latest" aliases. Provider
+ * behavior and availability can still change. Each entry's image input and
  * structured output support is taken from the provider's model documentation;
  * docs/providers.md records the sources and review dates.
  */
