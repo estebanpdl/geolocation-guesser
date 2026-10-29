@@ -1,10 +1,12 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { readApiError, TRAINING_SESSION_REQUIRED } from '@/lib/api-client';
+import { AnalysisRequestError, requestAnalysis, TRAINING_SESSION_REQUIRED } from '@/lib/api-client';
+import { useAnalysisTarget } from '@/hooks/useAnalysisCatalog';
 import type { Coordinate } from '@/lib/types';
 import AnalysisSections from './AnalysisSections';
 import type { AnalysisResult } from './AnalysisSections';
+import ParticipantKeyField from './ParticipantKeyField';
 import TrainingAccessLink from './TrainingAccessLink';
 
 interface AIAssistantPanelProps {
@@ -18,6 +20,7 @@ export default function AIAssistantPanel({ location, disabled = false, onAnalysi
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [needsAccess, setNeedsAccess] = useState(false);
+  const { selection, provider } = useAnalysisTarget();
 
   const handleAnalyze = useCallback(async () => {
     if (!location || loading || disabled) return;
@@ -27,32 +30,20 @@ export default function AIAssistantPanel({ location, disabled = false, onAnalysi
     setNeedsAccess(false);
 
     try {
-      const res = await fetch('/api/ai-analysis', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          lat: location.lat,
-          lng: location.lng,
-          heading: 0,
-          pitch: 0,
-        }),
-      });
-
-      if (!res.ok) {
-        const { message, code } = await readApiError(res, 'Analysis failed');
-        setNeedsAccess(code === TRAINING_SESSION_REQUIRED);
-        throw new Error(message);
-      }
-
-      const data = await res.json();
-      setAnalysis(data.analysis);
+      const result = await requestAnalysis(
+        '/api/ai-analysis',
+        { lat: location.lat, lng: location.lng, heading: 0, pitch: 0 },
+        selection
+      );
+      setAnalysis(result.analysis);
       onAnalysisUsed?.();
     } catch (err) {
+      setNeedsAccess(err instanceof AnalysisRequestError && err.code === TRAINING_SESSION_REQUIRED);
       setError(err instanceof Error ? err.message : 'Analysis unavailable');
     } finally {
       setLoading(false);
     }
-  }, [location, loading, disabled, onAnalysisUsed]);
+  }, [location, loading, disabled, onAnalysisUsed, selection]);
 
   return (
     <div className="p-4 space-y-3">
@@ -62,6 +53,8 @@ export default function AIAssistantPanel({ location, disabled = false, onAnalysi
           AI Analysis
         </h3>
       </div>
+
+      {provider && !analysis && <ParticipantKeyField provider={provider} disabled={loading || disabled} />}
 
       {!analysis && !loading && !error && (
         <button

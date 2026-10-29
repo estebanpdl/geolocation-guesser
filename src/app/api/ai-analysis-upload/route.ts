@@ -13,9 +13,15 @@ export async function POST(request: NextRequest) {
     // Access is checked before the (up to 14 MiB) body is read.
     const config = await loadServerConfig();
     checkTrainingAccess(request, config);
-    const image = parsePhotoRequest(await readJsonObject(request, BODY_LIMITS.PHOTO_ANALYSIS));
-    const analysis = await runPhotoAnalysis(image, config, request.signal);
-    return jsonResponse({ analysis }, requestId);
+    const body = await readJsonObject(request, BODY_LIMITS.PHOTO_ANALYSIS);
+    const image = parsePhotoRequest(body);
+    const outcome = await runPhotoAnalysis(
+      image,
+      { selection: body.selection, participantKey: body.participantKey },
+      config,
+      request.signal
+    );
+    return jsonResponse({ ...outcome }, requestId);
   } catch (err) {
     return errorResponse(err, requestId, 'ai-analysis-upload');
   }

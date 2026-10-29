@@ -2,8 +2,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { POST } from '../ai-analysis/route';
 import { POST as startSession } from '../training/session/route';
+import { parseAnalysisResponse } from '@/lib/analysis/contract';
 import { resetTrainingAccessState } from '@/lib/server/training-access';
 import {
+  geminiKeyOf,
   geminiStatus,
   geminiText,
   installFakeFetch,
@@ -11,6 +13,7 @@ import {
   isStreetView,
   jsonRequest,
   rewriteStore,
+  SAMPLE_ANALYSIS,
   sessionCookieFrom,
   streetViewImage,
   streetViewStatus,
@@ -50,7 +53,11 @@ describe('POST /api/ai-analysis', () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body.analysis.textAndSigns).toBe('Cyrillic shop sign.');
+    expect(body.analysis).toEqual(SAMPLE_ANALYSIS);
+    expect(body.selection).toEqual({ provider: 'gemini', model: 'gemini-flash' });
+    expect(body.credentialSource).toBe('operator');
+    expect(body).not.toHaveProperty('rawResponse');
+    expect(parseAnalysisResponse(body)).not.toBeNull();
     expect(body.requestId).toBe(response.headers.get('x-request-id'));
     expect(calls.filter((c) => isStreetView(c.url))).toHaveLength(1);
     expect(calls.filter((c) => isGemini(c.url))).toHaveLength(1);
@@ -123,11 +130,165 @@ describe('POST /api/ai-analysis', () => {
     }
   });
 
+  it.each([
+    ['output that is not JSON', geminiText('**Text & Signs**: sign'), 502, 'invalid_output'],
+    ['output missing a field', geminiText(JSON.stringify({ ...SAMPLE_ANALYSIS, overallAssessment: undefined })), 502, 'invalid_output'],
+    ['truncated output', geminiText('{"textAndSigns": "Cyr', 'MAX_TOKENS'), 502, 'output_truncated'],
+    ['a refusal', geminiText('', 'SAFETY'), 422, 'analysis_refused'],
+  ])('reports %s as an error, never a placeholder analysis', async (_label, route, status, code) => {
+    useServerKeys();
+    const { calls } = installFakeFetch(streetViewImage(), route);
+    const response = await analyze();
+    const body = await response.json();
+    expect([response.status, body.code]).toEqual([status, code]);
+    expect(body).not.toHaveProperty('analysis');
+    expect(calls.filter((c) => isGemini(c.url))).toHaveLength(1);
+  });
+
+  describe('model selection', () => {
+    it('accepts the default entry by ID', async () => {
+      useServerKeys();
+      installFakeFetch(streetViewImage(), geminiText());
+      const response = await analyze({ ...VIEW, selection: { provider: 'gemini', model: 'gemini-flash' } });
+      expect(response.status).toBe(200);
+    });
+
+    it.each([
+      ['an unknown model', { provider: 'gemini', model: 'gemini-ultra-unlisted' }, 400, 'unknown_model'],
+      ['an upstream model name', { provider: 'gemini', model: 'gemini-flash-latest' }, 400, 'unknown_model'],
+      ['an unknown provider', { provider: 'mistral', model: 'gemini-flash' }, 400, 'unknown_provider'],
+      ['a malformed selection', 'gemini-flash', 400, 'invalid_selection'],
+      ['a provider without an adapter', { provider: 'openai', model: 'gemini-flash' }, 503, 'provider_unavailable'],
+    ])('rejects %s before fetching the Street View image', async (_label, selection, status, code) => {
+      useServerKeys();
+      const { calls } = installFakeFetch(streetViewImage(), geminiText());
+      const response = await analyze({ ...VIEW, selection });
+      expect([response.status, (await response.json()).code]).toEqual([status, code]);
+      expect(calls).toHaveLength(0);
+    });
+  });
+
+  describe('participant keys', () => {
+    const participant = (apiKey: string, provider = 'gemini') => ({
+      ...VIEW,
+      selection: { provider: 'gemini', model: 'gemini-flash' },
+      participantKey: { provider, apiKey },
+    });
+
+    it('enable analysis when the server has no inference key, with the server key for the image', async () => {
+      vi.stubEnv('GOOGLE_MAPS_API_KEY', SYNTHETIC.MAPS_SERVER_KEY);
+      const { calls } = installFakeFetch(streetViewImage(), geminiText());
+      const response = await analyze(participant(SYNTHETIC.PARTICIPANT_GEMINI_KEY_A));
+      const text = await response.text();
+
+      expect(response.status).toBe(200);
+      expect(JSON.parse(text).credentialSource).toBe('participant');
+      expect(calls[0].url.searchParams.get('key')).toBe(SYNTHETIC.MAPS_SERVER_KEY);
+      expect(geminiKeyOf(calls[1])).toBe(SYNTHETIC.PARTICIPANT_GEMINI_KEY_A);
+      expect(text).not.toContain(SYNTHETIC.PARTICIPANT_GEMINI_KEY_A);
+    });
+
+    it('take precedence over the server key', async () => {
+      useServerKeys();
+      const { calls } = installFakeFetch(streetViewImage(), geminiText());
+      expect((await analyze(participant(SYNTHETIC.PARTICIPANT_GEMINI_KEY_A))).status).toBe(200);
+      expect(geminiKeyOf(calls[1])).toBe(SYNTHETIC.PARTICIPANT_GEMINI_KEY_A);
+    });
+
+    it('report a rejected key without retrying on the server key, logging or echoing it', async () => {
+      useServerKeys();
+      const warn = vi.spyOn(console, 'warn');
+      const error = vi.spyOn(console, 'error');
+      const { calls } = installFakeFetch(streetViewImage(), geminiStatus(400));
+
+      const response = await analyze(participant(SYNTHETIC.PARTICIPANT_GEMINI_KEY_A));
+      const text = await response.text();
+      const logged = consoleOutput(warn, error);
+
+      expect([response.status, JSON.parse(text).code]).toEqual([401, 'participant_key_rejected']);
+      const geminiCalls = calls.filter((c) => isGemini(c.url));
+      expect(geminiCalls).toHaveLength(1);
+      expect(geminiKeyOf(geminiCalls[0])).toBe(SYNTHETIC.PARTICIPANT_GEMINI_KEY_A);
+      expect(logged).toContain('code=participant_key_rejected');
+      for (const output of [text, logged]) {
+        expect(output).not.toContain(SYNTHETIC.PARTICIPANT_GEMINI_KEY_A);
+        expect(output).not.toContain(SYNTHETIC.GEMINI_KEY);
+      }
+    });
+
+    it.each([
+      ['a malformed key', participant('two words'), 'invalid_participant_key'],
+      ['a key for another provider', participant(SYNTHETIC.PARTICIPANT_OPENAI_KEY, 'openai'), 'participant_key_mismatch'],
+    ])('reject %s before fetching the Street View image', async (_label, body, code) => {
+      useServerKeys();
+      const { calls } = installFakeFetch(streetViewImage(), geminiText());
+      const response = await analyze(body);
+      const text = await response.text();
+      expect([response.status, JSON.parse(text).code]).toEqual([400, code]);
+      expect(text).not.toContain(SYNTHETIC.PARTICIPANT_OPENAI_KEY);
+      expect(calls).toHaveLength(0);
+    });
+
+    it('fall back to the server key only when blank', async () => {
+      useServerKeys();
+      const { calls } = installFakeFetch(streetViewImage(), geminiText());
+      const response = await analyze(participant('   '));
+      expect((await response.json()).credentialSource).toBe('operator');
+      expect(geminiKeyOf(calls[1])).toBe(SYNTHETIC.GEMINI_KEY);
+    });
+
+    it('stay with their own request when requests interleave', async () => {
+      useServerKeys();
+      // Gemini replies in reverse arrival order and tags each reply with the key it saw.
+      const tags: Record<string, string> = {
+        [SYNTHETIC.PARTICIPANT_GEMINI_KEY_A]: 'A',
+        [SYNTHETIC.PARTICIPANT_GEMINI_KEY_B]: 'B',
+        [SYNTHETIC.GEMINI_KEY]: 'operator',
+      };
+      let arrivals = 0;
+      const { calls } = installFakeFetch(streetViewImage(), async (url, init) => {
+        if (!isGemini(url)) return undefined;
+        const key = new Headers(init?.headers).get('x-goog-api-key') ?? '';
+        await new Promise((r) => setTimeout(r, 30 - 10 * arrivals++));
+        const text = JSON.stringify({ ...SAMPLE_ANALYSIS, overallAssessment: tags[key] ?? 'unknown' });
+        return Response.json({ candidates: [{ content: { role: 'model', parts: [{ text }] }, finishReason: 'STOP', index: 0 }] });
+      });
+
+      const responses = await Promise.all([
+        analyze(participant(SYNTHETIC.PARTICIPANT_GEMINI_KEY_A)),
+        analyze(VIEW),
+        analyze(participant(SYNTHETIC.PARTICIPANT_GEMINI_KEY_B)),
+      ]);
+      const texts = await Promise.all(responses.map((r) => r.text()));
+      const bodies = texts.map((t) => JSON.parse(t));
+
+      expect(bodies.map((b) => [b.analysis.overallAssessment, b.credentialSource])).toEqual([
+        ['A', 'participant'],
+        ['operator', 'operator'],
+        ['B', 'participant'],
+      ]);
+      expect(calls.filter((c) => isGemini(c.url)).map(geminiKeyOf).sort()).toEqual(
+        [SYNTHETIC.PARTICIPANT_GEMINI_KEY_A, SYNTHETIC.PARTICIPANT_GEMINI_KEY_B, SYNTHETIC.GEMINI_KEY].sort()
+      );
+      for (const text of texts) expect(text).not.toMatch(/synthetic-/);
+    });
+  });
+
   describe('in training mode', () => {
     beforeEach(() => {
       useServerKeys();
       vi.stubEnv('TRAINING_MODE', 'open');
       vi.stubEnv('TRAINING_ACCESS_CODE', SYNTHETIC.ACCESS_CODE);
+    });
+
+    it('requires a session for participant-key requests too', async () => {
+      const { calls } = installFakeFetch(streetViewImage(), geminiText());
+      const response = await analyze({
+        ...VIEW,
+        participantKey: { provider: 'gemini', apiKey: SYNTHETIC.PARTICIPANT_GEMINI_KEY_A },
+      });
+      expect([response.status, (await response.json()).code]).toEqual([401, 'training_session_required']);
+      expect(calls).toHaveLength(0);
     });
 
     it('rejects requests without a session before reading the body or calling out', async () => {

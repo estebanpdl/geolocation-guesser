@@ -71,6 +71,14 @@ describe('/api/training/session', () => {
     expect((await enter(SYNTHETIC.ACCESS_CODE)).status).toBe(503);
   });
 
+  it('reports status with only the mode, session state and expiry', async () => {
+    const response = await GET(getRequest('/api/training/session'));
+    const text = await response.text();
+    expect(Object.keys(JSON.parse(text).training).sort()).toEqual(['active', 'expiresAt', 'mode']);
+    expect(text).not.toContain(SYNTHETIC.ACCESS_CODE);
+    expect(text.toUpperCase()).not.toContain(SYNTHETIC.ACCESS_CODE.replace(/-/g, ''));
+  });
+
   it('ends the session and clears the cookie', async () => {
     const cookie = sessionCookieFrom(await enter(SYNTHETIC.ACCESS_CODE));
     const response = await DELETE(getRequest('/api/training/session', cookie, 'DELETE'));

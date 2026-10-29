@@ -7,6 +7,7 @@ import GameLayout from '@/components/GameLayout';
 import StreetViewCanvas from '@/components/StreetViewCanvas';
 import GuessMap from '@/components/GuessMap';
 import AIAssistantPanel from '@/components/AIAssistantPanel';
+import TrainingNavLink from '@/components/TrainingNavLink';
 import RoundResult from '@/components/RoundResult';
 import SessionSummary from '@/components/SessionSummary';
 import type { Coordinate } from '@/lib/types';
@@ -143,6 +144,7 @@ function GameContent() {
             )}
           </div>
           <div className="flex items-center gap-4">
+            <TrainingNavLink newTab />
             <span className="text-xs text-tactical-muted">
               Score: <span className="text-tactical-green font-mono">{formatScore(totalScore)}</span>
             </span>
