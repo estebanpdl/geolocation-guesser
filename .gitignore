@@ -24,8 +24,7 @@ yarn-error.log*
 .pnpm-debug.log*
 
 # env files
-.env
-.env*.local
+.env*
 
 # vercel
 .vercel
@@ -37,6 +36,7 @@ next-env.d.ts
 # dev specific
 *.*/
 *.md
+/skills-lock.json
 
 # dev env template
 !.env.example

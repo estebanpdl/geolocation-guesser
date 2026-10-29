@@ -160,16 +160,17 @@ export async function writeStore(storePath: string, data: StoreData): Promise<vo
   const tempPath = path.join(directory, `.${path.basename(storePath)}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`);
   const handle = await fs.open(tempPath, 'wx', 0o600);
   try {
-    await handle.writeFile(`${JSON.stringify(normalized, null, 2)}\n`, 'utf8');
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-
-  try {
+    try {
+      await handle.writeFile(`${JSON.stringify(normalized, null, 2)}\n`, 'utf8');
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
     await fs.rename(tempPath, storePath);
   } catch (err) {
-    await fs.rm(tempPath, { force: true });
+    // A failed write or flush can leave plaintext credentials in the sibling file.
+    // Cleanup is best-effort; retain the original failure if removal also fails.
+    await fs.rm(tempPath, { force: true }).catch(() => undefined);
     throw err;
   }
   if (process.platform !== 'win32') {

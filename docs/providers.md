@@ -40,8 +40,8 @@ The same validated image bytes go to either provider:
 - **Gemini:** an `inlineData` part (base64 plus MIME type) after the text prompt. Output uses
   `responseMimeType: 'application/json'` and `responseJsonSchema`, which accepts JSON Schema including
   `additionalProperties`.
-- **OpenAI:** an `input_image` part with a `data:` URL and `detail: 'high'`. That detail level caps the size the
-  model sees, so large photos are scaled down instead of rejected or billed at full resolution
+- **OpenAI:** an `input_image` part with a `data:` URL and `detail: 'high'`. The app sends the original validated
+  bytes without resizing; image processing and token billing depend on the selected model
   ([images and vision](https://developers.openai.com/api/docs/guides/images-vision)). Output uses
   `text.format: { type: 'json_schema', strict: true }`
   ([structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs)).

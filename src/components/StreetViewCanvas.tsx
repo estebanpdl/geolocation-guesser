@@ -31,7 +31,7 @@ export default function StreetViewCanvas({ location, onPanoramaChange, onError }
     sv.getPanorama(
       {
         location: { lat: location.lat, lng: location.lng },
-        // Server already validated these coords — small radius is fine
+        // Resolve imagery near the candidate coordinate; the pool does not guarantee availability.
         radius: 1000,
       },
       (data, status) => {

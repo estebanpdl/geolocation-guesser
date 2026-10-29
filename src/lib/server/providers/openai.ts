@@ -9,8 +9,8 @@ import type { GenerationResult, ProviderAdapter } from './types';
 const OPENAI_BASE_URL = 'https://api.openai.com/v1';
 
 /**
- * `high` bounds the image the model sees (and its token cost) to a fixed size
- * class, so a large photo is scaled down rather than rejected or billed at full resolution.
+ * Request high-detail image processing. The original validated bytes are sent;
+ * resizing and image-token billing are handled by the selected provider model.
  */
 const IMAGE_DETAIL = 'high';
 

@@ -74,8 +74,9 @@ image was taken.
 
 ## Requirements
 
-- **Node.js 22.6 or later**, because the `openai` SDK requires Node 22 and `npm run auth` uses Node's built-in
-  TypeScript type stripping. Developed with Node 22.15.0 and npm 11.
+- **A Node.js 22 release with current security fixes.**
+  The `openai` SDK requires Node 22 and `npm run auth` uses Node's built-in TypeScript type stripping.
+  Developed with Node 22.15.0 and npm 11; that development version is not a security recommendation.
 - **A Google Maps Platform project** with billing enabled and these APIs:
   - Maps JavaScript API, for the browser map and panoramas;
   - Street View Static API, for scene analysis.
@@ -195,6 +196,9 @@ as the off switch.
 - It cannot see variables set only in the server's process environment (for example by a service manager). `status`
   says so.
 
+Use literal values for these settings in `.env*` files. Next.js expands `$VARIABLE` references, but `auth` reads
+them literally, so its status and override checks can differ from the server when expansion is used.
+
 Saved changes reach a running server on its next request; no restart is needed.
 
 ## AI analysis
@@ -228,14 +232,17 @@ edit `defaultSelection` in `src/lib/server/catalog.ts`.
 - Automatic retries are off in both SDKs. There is no fallback to another model, provider or key, and no follow-up
   "repair" request.
 - Every click, including **Retry**, is a new, separately billed request.
-- Each analysis has a 60-second deadline. If it is cancelled after the provider has started work, the provider
-  may still bill for it.
+- After the request body has been read and validated, scene image retrieval plus inference have a shared
+  60-second deadline (inference only for photos). This does not time-limit the incoming upload. If a request
+  is cancelled after the provider has started work, the provider may still bill for it.
 
 ### What is sent where
 
 - **Scene analysis:** the server fetches one Street View Static image for the round's coordinates and sends it, with
   the prompt, to the selected provider.
-- **Photo analysis:** the uploaded photo is validated and sent, with the prompt, to the selected provider.
+- **Photo analysis:** the server checks the photo's byte size, signature and header dimensions, then sends the
+  original bytes with the prompt to the selected provider. It does not fully decode or re-encode the file;
+  embedded metadata is not stripped, and the provider may still reject a damaged image.
 
 The app does not store, cache or log images or analyses on the server; results are only shown in the browser. OpenAI
 requests are sent with `store: false`. How each provider retains or uses request data depends on its terms for your
@@ -380,6 +387,9 @@ npm test -- src/lib/server/__tests__/catalog.test.ts src/app/api/__tests__/ai-an
 
 ## Known limitations
 
+- The lockfile and development runtime need security maintenance before public deployment. Review the
+  [Next.js security releases](https://nextjs.org/blog/security) and
+  [Node.js security releases](https://nodejs.org/en/blog/vulnerability).
 - **The analyzed image can differ from the panorama on screen.** Scene analysis fetches a Static image at the round's
   coordinates, facing north and level. The browser opens the nearest panorama within 1 km and lets you move. Scoring
   uses the round's coordinates.

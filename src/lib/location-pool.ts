@@ -1,4 +1,4 @@
-// Auto-generated pool of known Street View coordinates.
+// Auto-generated pool of candidate Street View coordinates; availability is checked in the browser.
 // 18575 unique locations worldwide.
 // Sources: randomstreetview.com + community datasets (coords.csv, new_coords.csv)
 
