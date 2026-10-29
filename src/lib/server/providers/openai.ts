@@ -70,6 +70,7 @@ export const openaiAdapter: ProviderAdapter = {
       maxRetries: 0,
       timeout: ANALYSIS_LIMITS.DEADLINE_MS,
       logLevel: 'off',
+      fetch: withRequestHeadersOnly(apiKey),
     });
 
     let response: OpenAI.Responses.Response;
@@ -103,6 +104,20 @@ export const openaiAdapter: ProviderAdapter = {
     return readOpenAIResponse(response);
   },
 };
+
+/**
+ * Replaces the SDK's headers with exactly the ones this request needs. The SDK
+ * also adds headers from `OPENAI_CUSTOM_HEADERS`, after its own authorization
+ * header, so an environment value could otherwise attach an operator's
+ * organization, project or even key to a participant's request.
+ */
+function withRequestHeadersOnly(apiKey: string): typeof fetch {
+  return (input, init) =>
+    fetch(input, {
+      ...init,
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+    });
+}
 
 /** Maps SDK failures to safe errors; provider messages can echo request details and are dropped. */
 function providerError(err: unknown, signal: AbortSignal): ApiError {

@@ -96,6 +96,25 @@ describe('openaiAdapter', () => {
     expect(headers.get('openai-project')).toBeNull();
   });
 
+  it('sends no header taken from OPENAI_CUSTOM_HEADERS', async () => {
+    vi.stubEnv(
+      'OPENAI_CUSTOM_HEADERS',
+      [
+        'OpenAI-Organization: org-synthetic-operator',
+        'OpenAI-Project: proj-synthetic-operator',
+        'X-Operator-Note: synthetic-operator-value',
+        `Authorization: Bearer ${SYNTHETIC.OPENAI_KEY}`,
+      ].join('\n')
+    );
+    const { calls } = installFakeFetch(openaiText());
+    await openaiAdapter.generate(request({ apiKey: SYNTHETIC.PARTICIPANT_OPENAI_KEY }));
+
+    const headers = new Headers(calls[0].init?.headers);
+    expect([...headers.keys()].sort()).toEqual(['accept', 'authorization', 'content-type']);
+    expect(openaiKeyOf(calls[0])).toBe(SYNTHETIC.PARTICIPANT_OPENAI_KEY);
+    expect(JSON.stringify([...headers])).not.toMatch(/synthetic-operator|synthetic-openai-key/);
+  });
+
   it('uses only the key of each call when calls interleave', async () => {
     const { calls } = installFakeFetch(openaiText());
     await Promise.all([
