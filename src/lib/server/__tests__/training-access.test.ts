@@ -172,6 +172,16 @@ describe('startTrainingSession', () => {
     expect(startTrainingSession(request(undefined, '192.0.2.250, 198.51.100.2'), SYNTHETIC.ACCESS_CODE, open, T0).sessionId).toBeTruthy();
   });
 
+  it('gives one IPv6 /64 one budget, however many addresses it rotates through', () => {
+    const open = config('open', SYNTHETIC.ACCESS_CODE, '60', { hops: '1' });
+    for (let i = 0; i < ATTEMPT_LIMITS.CLIENT_BURST; i++) {
+      apiError(() => startTrainingSession(request(undefined, `2001:db8:aa:bb::${(i + 1).toString(16)}`), 'WRONGCODE1', open, T0));
+    }
+    const err = apiError(() => startTrainingSession(request(undefined, '2001:db8:aa:bb:1:2:3:4'), SYNTHETIC.ACCESS_CODE, open, T0));
+    expect(err.code).toBe('too_many_attempts');
+    expect(startTrainingSession(request(undefined, '2001:db8:aa:bc::1'), SYNTHETIC.ACCESS_CODE, open, T0).sessionId).toBeTruthy();
+  });
+
   it('gives each spoofed header its own budget without a trusted proxy, leaving the host bound', () => {
     const open = config('open');
     for (let i = 0; i < ATTEMPT_LIMITS.CLIENT_BURST; i++) {

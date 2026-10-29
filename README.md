@@ -322,10 +322,15 @@ Wrong codes are limited per client address and across the whole server:
 
 - **Per address:** 20 wrong codes at once, then one more every 15 seconds. A room on shared Wi-Fi often reaches the
   server from a single address, so the allowance is sized for a room's typos. Once it is used up, that address waits
-  at most 15 seconds before its next attempt.
+  at most 15 seconds before its next attempt. An IPv6 address counts as its whole /64 network, because one device
+  can usually use any address in its /64.
 - **Across all clients:** 30 wrong codes per minute.
 - While a limit applies, the code entries it covers get 429 with a `Retry-After`, even the right code.
   Sessions that already exist keep working.
+- **What remains:** someone with many addresses (many IPv4 addresses or many /64 networks) can still keep the
+  server-wide limit full and block new code entries for everyone. Existing sessions keep working. `training unlock`
+  and `training rotate` do not help, because the limit fills again within seconds; the fix is to take the server
+  off the network (on a tunnel, stop ngrok).
 
 **Clear a lockout without a restart:**
 
@@ -350,8 +355,9 @@ addresses. Set `TRUSTED_PROXY_HOPS` to the number of proxies in front of the ser
 | `2`, `3` | The 2nd or 3rd entry from the end, for a chain of proxies. |
 
 If the header has fewer entries than that, or the entry is not an IP address, the request counts against one
-shared allowance. Never set it higher than the real number of proxies: clients could then choose their address
-again. `npm run auth -- status` shows the value in use.
+shared allowance. IPv4-mapped IPv6 addresses (`::ffff:a.b.c.d`) count as the IPv4 address. Never set it higher
+than the real number of proxies: clients could then choose their address again. `npm run auth -- status` shows
+the value in use.
 
 ### Running a public session
 
@@ -409,6 +415,11 @@ its fixed dev domain. A tunnel puts the server on your laptop on the public inte
 > - **Only AI analysis needs the code.** The code controls who can analyze, not how much.
 > - **The URL does not change.** The free dev domain is fixed, so a URL that leaks once stays valid for every later
 >   workshop.
+> - **ngrok sees the traffic.** HTTPS ends at ngrok's servers, so the training code, session cookies, uploaded
+>   photos and analyses pass through ngrok decrypted. The agent's local inspector at <http://localhost:4040> shows
+>   recent requests on your laptop, bodies included. ngrok's dashboard Traffic Inspector stores only request
+>   metadata by default, kept 24 hours on the free plan. Its Full Capture setting, which also stores headers and
+>   bodies, is opt-in: leave it off.
 >
 > To limit this:
 >
