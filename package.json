@@ -15,7 +15,7 @@
   "dependencies": {
     "@google/genai": "^2.31.0",
     "@googlemaps/js-api-loader": "^2.0.2",
-    "next": "^15.1.0",
+    "next": "^15.5.28",
     "openai": "^7.45.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
