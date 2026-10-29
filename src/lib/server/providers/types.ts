@@ -2,6 +2,8 @@ import type { ProviderId } from '@/lib/analysis/contract';
 import type { AnalysisOutputSchema } from '../analysis-prompt';
 import type { ValidatedImage } from '../image';
 
+export type ReasoningEffort = 'none' | 'low' | 'medium';
+
 /** Everything one generation needs. The key belongs to this request only. */
 export interface GenerationRequest {
   /** Exact upstream model ID from the server catalog. */
@@ -10,6 +12,8 @@ export interface GenerationRequest {
   prompt: string;
   schema: AnalysisOutputSchema;
   maxOutputTokens: number;
+  /** Reasoning effort for providers that expose one; others ignore it. */
+  reasoningEffort?: ReasoningEffort;
   apiKey: string;
   /** Aborts the provider call; aborting does not cancel work already billed upstream. */
   signal: AbortSignal;

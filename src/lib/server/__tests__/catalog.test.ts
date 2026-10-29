@@ -26,14 +26,41 @@ describe('CATALOG', () => {
     expect(catalogProblems(TWO_PROVIDER_CATALOG)).toEqual([]);
   });
 
-  it('keeps OpenAI in the design but disabled until it has an adapter', () => {
-    expect(CATALOG.providers.find((p) => p.id === 'openai')).toMatchObject({ enabled: false, participantKeys: true });
-    expect(publicCatalog(config()).providers.map((p) => p.id)).toEqual(['gemini']);
+  it('offers both providers, with OpenAI limited to photos while Street View imagery is not permitted for it', () => {
+    expect(CATALOG.providers.find((p) => p.id === 'openai')).toMatchObject({ enabled: true, participantKeys: true, streetViewImagery: false });
+    expect(publicCatalog(config()).providers.map((p) => [p.id, p.models.map((m) => [m.id, m.workflows, m.default])])).toEqual([
+      [
+        'gemini',
+        [
+          ['gemini-3.5-flash-lite', ['scene', 'photo'], true],
+          ['gemini-3.8-flash', ['scene', 'photo'], false],
+        ],
+      ],
+      [
+        'openai',
+        [
+          ['gpt-6-luna', ['photo'], true],
+          ['gpt-6.1-terra', ['photo'], false],
+        ],
+      ],
+    ]);
+  });
+
+  it('pins exact upstream model IDs rather than moving aliases', () => {
+    for (const entry of CATALOG.models) expect(entry.upstreamModel).not.toMatch(/latest|preview/);
   });
 
   it('defaults to a Gemini entry available for both workflows', () => {
-    expect(resolveSelection(undefined, 'scene').model).toMatchObject({ id: 'gemini-flash', provider: 'gemini' });
-    expect(resolveSelection(undefined, 'photo').model.id).toBe('gemini-flash');
+    expect(resolveSelection(undefined, 'scene').model).toMatchObject({ id: 'gemini-3.5-flash-lite', provider: 'gemini' });
+    expect(resolveSelection(undefined, 'photo').model.id).toBe('gemini-3.5-flash-lite');
+  });
+
+  it('requires the default selection to stay available for scenes', () => {
+    const noStreetView: Catalog = {
+      ...TWO_PROVIDER_CATALOG,
+      providers: TWO_PROVIDER_CATALOG.providers.map((p) => (p.id === 'gemini' ? { ...p, streetViewImagery: false } : p)),
+    };
+    expect(catalogProblems(noStreetView)).toContain('defaultSelection must support both workflows');
   });
 
   it('reports structural problems', () => {
@@ -108,7 +135,17 @@ describe('resolveSelection', () => {
   });
 
   it('refuses a disabled provider with 503', () => {
-    const err = selectionError(() => resolveSelection({ provider: 'openai', model: 'any' }, 'photo'));
+    const disabled: Catalog = {
+      ...TWO_PROVIDER_CATALOG,
+      providers: TWO_PROVIDER_CATALOG.providers.map((p) => (p.id === 'openai' ? { ...p, enabled: false } : p)),
+    };
+    const err = selectionError(() => resolveSelection({ provider: 'openai', model: 'oa-default' }, 'photo', disabled));
     expect([err.status, err.code]).toEqual([503, 'provider_unavailable']);
+  });
+
+  it('refuses Street View analysis for a provider not permitted to receive it, but not photos', () => {
+    const err = selectionError(() => resolveSelection({ provider: 'openai', model: 'gpt-6-luna' }, 'scene'));
+    expect([err.status, err.code]).toEqual([403, 'street_view_not_permitted']);
+    expect(resolveSelection({ provider: 'openai', model: 'gpt-6-luna' }, 'photo').model.upstreamModel).toBe('gpt-6-luna');
   });
 });

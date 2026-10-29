@@ -12,9 +12,10 @@
     "auth": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/auth.ts"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.24.1",
+    "@google/genai": "^2.31.0",
     "@googlemaps/js-api-loader": "^2.0.2",
     "next": "^15.1.0",
+    "openai": "^7.45.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0"
