@@ -16,6 +16,8 @@ credentials behind an access code.
 >   code controls who can analyze, not how much.
 > - If you want a spend limit, set it with each provider, on your own keys: budgets, quotas or billing alerts in your
 >   Google Cloud and OpenAI accounts.
+> - **Never leave a reachable host in `off` mode.** In `off`, anyone who can reach the server can run AI analyses on
+>   your keys without a code. Use `closed` when no session is running.
 > - Google Maps calls cost money even with AI turned off. Anyone who can reach the site can play, and every game
 >   loads maps and panoramas on your Maps key.
 
@@ -285,7 +287,7 @@ Training access protects the two AI analysis routes. It does not gate the game i
 
 | Mode | Behavior |
 |---|---|
-| `off` (default) | Local use. AI analysis needs no code. |
+| `off` (default) | Local use. AI analysis needs no code, so only use it on a server others cannot reach. |
 | `open` | AI analysis requires a session, started by entering the access code at `/training`. |
 | `closed` | AI analysis is refused for everyone, including participants with their own key. |
 
@@ -314,7 +316,8 @@ How it works:
 4. Run **one** `npm run start` process behind an HTTPS reverse proxy. The proxy should set `X-Forwarded-Proto` and
    overwrite `X-Forwarded-For`.
 5. Share the site address and the code with participants.
-6. When you are done: `npm run auth -- training close`, then `training off` if the host is going back to local use.
+6. When you are done: `npm run auth -- training close`. Switch to `training off` only once the server can no longer
+   be reached by others (for example, back on `localhost` only).
 
 **Single process only.** Sessions and attempt counters live in that server process's memory:
 
@@ -333,9 +336,13 @@ This repository is public. If you host it for others, this is what that means:
   them at once.
 - **Spend limits are set with the providers.** Use budgets, quotas and billing alerts in your Google Cloud account
   (Maps and Gemini) and your OpenAI account. The app cannot enforce them for you.
+- **Never leave a reachable host in `off` mode.** `off` turns training access off entirely: anyone who can reach the
+  server can run AI analyses on your stored keys, without a code. Keep a reachable host in `open` during a session
+  and `closed` otherwise.
 - **Google Maps costs money without AI.** Every game loads the Maps JavaScript API, a Street View panorama per round
-  and the guess map on your browser key. Each scene analysis adds a Street View Static request on your server key. The training access code does not protect the game pages, so anyone who can reach the site can
-  generate Maps usage.
+  and the guess map on your browser key. Each scene analysis adds a Street View Static request on your server key.
+  The training access code does not protect the game pages, so anyone who can reach the site can generate Maps
+  usage.
 - **To limit exposure:**
   - restrict both Google keys as described in [Setup](#use-separate-restricted-keys);
   - keep the host private or behind your own access control when no session is running;
