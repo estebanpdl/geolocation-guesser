@@ -105,6 +105,27 @@ describe('geminiAdapter', () => {
     expect(calls).toHaveLength(1);
   });
 
+  it('does not send a follow-up request for a response that offers a continuation', async () => {
+    // Only the first reply offers a continuation, so an SDK that followed it would stop after one more request.
+    let replies = 0;
+    const { calls } = installFakeFetch(() =>
+      replies++ === 0
+        ? Response.json({
+            candidates: [
+              {
+                content: { role: 'model', parts: [{ text: '{"textAndSigns": "cut off' }] },
+                finishReason: 'CONTINUATION',
+                continuationToken: 'c3ludGhldGljLXRva2Vu',
+                index: 0,
+              },
+            ],
+          })
+        : Response.json({ candidates: [{ content: { role: 'model', parts: [{ text: '"}' }] }, finishReason: 'STOP', index: 0 }] })
+    );
+    await expect(geminiAdapter.generate(request())).resolves.toEqual({ status: 'truncated' });
+    expect(calls).toHaveLength(1);
+  });
+
   it('treats an unknown finish reason as a provider failure', async () => {
     installFakeFetch(geminiText(SAMPLE_ANALYSIS_JSON, 'MALFORMED_FUNCTION_CALL'));
     expect((await failure(geminiAdapter.generate(request()))).code).toBe('provider_error');
