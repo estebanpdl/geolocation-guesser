@@ -90,13 +90,20 @@ Each provider has a `streetViewImagery` flag in `src/lib/server/catalog.ts`. Whe
 models are offered for photo analysis only, and scene requests are refused with 403
 `street_view_not_permitted` before any Street View image is fetched.
 
-- **OpenAI: off.** Sending Street View Static API images to OpenAI stays disabled until the Google Maps
-  Platform terms are confirmed to allow it. The [Street View Static API policies](https://developers.google.com/maps/documentation/streetview/policies)
-  (updated 2026-10-28) generally prohibit storing or caching content and require Google Maps attribution.
-  The governing [Terms of Service](https://cloud.google.com/maps-platform/terms) and
-  [Service Specific Terms](https://cloud.google.com/maps-platform/terms/maps-service-terms) must be reviewed for
-  use with third-party services.
-- **Gemini: on.** This is the existing scene analysis behavior; the same terms review applies.
+Both providers are **on**, and a scene analysis sends the same starting Street View image either way.
+
+- The [Street View Static API policies](https://developers.google.com/maps/documentation/streetview/policies)
+  (updated 2026-10-28) generally prohibit storing or caching content and require Google Maps attribution. They
+  defer to the governing [Terms of Service](https://cloud.google.com/maps-platform/terms) and
+  [Service Specific Terms](https://cloud.google.com/maps-platform/terms/maps-service-terms), which could not be
+  retrieved by automated fetch.
+- The project maintainer read those terms on 2026-10-29 and decided to allow Street View analysis with OpenAI
+  and to keep it with Gemini. The basis: each image is fetched for one analysis of a publicly available
+  location and sent to the selected provider in that request; the app does not store, cache or index it, and
+  does not use it to train models. OpenAI requests also set `store: false`.
+- This is the project's reading, not legal advice. Operators are responsible for their own compliance with the
+  Google Maps Platform terms and each AI provider's terms. To stop sending Street View images to a provider,
+  set its `streetViewImagery` flag to `false`.
 
 ## Not verified against the live APIs
 

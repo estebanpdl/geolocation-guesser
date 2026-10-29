@@ -36,8 +36,8 @@ describe('GET /api/analysis/catalog', () => {
           operatorCredentials: false,
           participantKeys: true,
           models: [
-            { id: 'gpt-6-luna', label: 'GPT-6 Luna', workflows: ['photo'], default: true },
-            { id: 'gpt-6.1-terra', label: 'GPT-6.1 Terra', workflows: ['photo'], default: false },
+            { id: 'gpt-6-luna', label: 'GPT-6 Luna', workflows: ['scene', 'photo'], default: true },
+            { id: 'gpt-6.1-terra', label: 'GPT-6.1 Terra', workflows: ['scene', 'photo'], default: false },
           ],
         },
       ],
