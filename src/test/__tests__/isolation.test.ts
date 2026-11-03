@@ -2,10 +2,11 @@ import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { loadGoogleMaps } from '@/lib/google-maps';
 import { resolveStorePath } from '@/lib/server/credential-store';
 import { loadServerConfig } from '@/lib/server/server-config';
+import { installBrowserFetch } from '@/test/browser';
 
 describe('offline test isolation', () => {
   it('blocks fetch to external hosts', async () => {
@@ -39,8 +40,10 @@ describe('offline test isolation', () => {
   });
 
   it('never loads the Google Maps script', async () => {
-    vi.stubEnv('NEXT_PUBLIC_GOOGLE_MAPS_API_KEY', 'synthetic-browser-key');
-    await expect(loadGoogleMaps()).rejects.toThrow();
+    installBrowserFetch({
+      '/api/maps/config': () => new Response(JSON.stringify({ maps: { browserKey: 'synthetic-browser-key' } })),
+    });
+    await expect(loadGoogleMaps()).rejects.toThrow(/not available in tests/);
     expect(document.querySelectorAll('script')).toHaveLength(0);
   });
 });

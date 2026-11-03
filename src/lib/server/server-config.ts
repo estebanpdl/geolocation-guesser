@@ -26,10 +26,10 @@ export const CREDENTIAL_ENV: Record<CredentialField, string> = {
   geminiApiKey: 'GOOGLE_GENERATIVE_AI_KEY',
   openaiApiKey: 'OPENAI_API_KEY',
   mapsServerKey: 'GOOGLE_MAPS_API_KEY',
+  // Read on the server at request time and served to the browser by /api/maps/config. Only dynamic
+  // lookups such as this one reach it, so Next.js never inlines it into a bundle at build time.
+  mapsBrowserKey: 'NEXT_PUBLIC_GOOGLE_MAPS_API_KEY',
 };
-
-/** Older setups configured only the browser Maps key; it remains the last resort for Street View images. */
-export const PUBLIC_MAPS_KEY_ENV = 'NEXT_PUBLIC_GOOGLE_MAPS_API_KEY';
 
 export const TRAINING_ENV = {
   MODE: 'TRAINING_MODE',
@@ -47,7 +47,8 @@ export const SESSION_TTL_DEFAULT_MINUTES = 180;
 const SESSION_TTL_MIN_MINUTES = 5;
 const SESSION_TTL_MAX_MINUTES = 24 * 60;
 
-export type ValueSource = 'environment' | 'store' | 'public-environment';
+/** `browser-key`: the Street View server key fell back to the Maps browser key. */
+export type ValueSource = 'environment' | 'store' | 'browser-key';
 
 export interface ResolvedValue {
   value: string;
@@ -117,9 +118,9 @@ export function resolveServerConfig(env: Env, store: { status: StoreStatus; path
     if (fromEnv) credentials[field] = { value: fromEnv, source: 'environment' };
     else if (fromStore) credentials[field] = { value: fromStore, source: 'store' };
   }
-  if (!credentials.mapsServerKey) {
-    const publicKey = effectiveValue(env[PUBLIC_MAPS_KEY_ENV]);
-    if (publicKey) credentials.mapsServerKey = { value: publicKey, source: 'public-environment' };
+  // Setups with only the browser key keep working: it is the last resort for Street View images.
+  if (!credentials.mapsServerKey && credentials.mapsBrowserKey) {
+    credentials.mapsServerKey = { value: credentials.mapsBrowserKey.value, source: 'browser-key' };
   }
 
   // Mode: an invalid explicit setting or an unreadable store blocks paid routes rather than opening them.
@@ -235,13 +236,14 @@ export async function loadServerConfig(env: Env = process.env): Promise<ServerCo
 const SOURCE_LABELS: Record<ValueSource, string> = {
   environment: 'environment',
   store: 'credential store',
-  'public-environment': `${PUBLIC_MAPS_KEY_ENV} fallback`,
+  'browser-key': 'Maps browser key fallback',
 };
 
 const CREDENTIAL_LABELS: Record<CredentialField, string> = {
   geminiApiKey: 'Gemini API key',
   openaiApiKey: 'OpenAI API key',
   mapsServerKey: 'Street View server key',
+  mapsBrowserKey: 'Maps browser key',
 };
 
 const PROBLEM_TEXT: Record<string, string> = {

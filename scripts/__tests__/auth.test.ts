@@ -76,6 +76,58 @@ describe('auth command', () => {
     expect(h.out.join('\n')).toContain('GOOGLE_MAPS_API_KEY is set in shell environment and takes precedence');
   });
 
+  it('saves and removes the Maps browser key without printing it', async () => {
+    const h = await harness([SYNTHETIC.MAPS_BROWSER_KEY]);
+    expect(await runAuth(['set', 'maps-browser'], h.io)).toBe(0);
+    expect(h.prompts).toEqual(['Maps browser key: ']);
+    expect((await stored(h)).credentials.mapsBrowserKey).toBe(SYNTHETIC.MAPS_BROWSER_KEY);
+    expect(h.out.join('\n')).toContain('Saved the Maps browser key');
+    expect(h.out.join('\n')).not.toContain('takes precedence');
+
+    expect(await runAuth(['remove', 'maps-browser'], h.io)).toBe(0);
+    expect((await stored(h)).credentials.mapsBrowserKey).toBeUndefined();
+    expect([...h.out, ...h.err].join('\n')).not.toContain(SYNTHETIC.MAPS_BROWSER_KEY);
+  });
+
+  it('notes when the Maps browser key in the environment or .env.local overrides the saved one', async () => {
+    const shell = await harness([SYNTHETIC.MAPS_BROWSER_KEY], { NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: 'env-value' });
+    expect(await runAuth(['set', 'maps-browser'], shell.io)).toBe(0);
+    expect(shell.out.join('\n')).toContain(
+      'NEXT_PUBLIC_GOOGLE_MAPS_API_KEY is set in shell environment and takes precedence over the saved value.'
+    );
+
+    const file = await harness([SYNTHETIC.MAPS_BROWSER_KEY], {}, { '.env.local': 'NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=file-value\n' });
+    expect(await runAuth(['set', 'maps-browser'], file.io)).toBe(0);
+    expect(file.out.join('\n')).toContain('NEXT_PUBLIC_GOOGLE_MAPS_API_KEY is set in .env.local and takes precedence');
+
+    const placeholder = await harness([SYNTHETIC.MAPS_BROWSER_KEY], {}, {
+      '.env.local': 'NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here\n',
+    });
+    expect(await runAuth(['set', 'maps-browser'], placeholder.io)).toBe(0);
+    expect(placeholder.out.join('\n')).not.toContain('takes precedence');
+  });
+
+  it('reports the Maps browser key in status, from the store or the environment', async () => {
+    const empty = await harness();
+    await runAuth(['status'], empty.io);
+    expect(empty.out).toContain('Maps browser key: not configured');
+
+    const saved = await harness([SYNTHETIC.MAPS_BROWSER_KEY]);
+    await runAuth(['set', 'maps-browser'], saved.io);
+    saved.out.length = 0;
+    await runAuth(['status'], saved.io);
+    expect(saved.out).toContain('Maps browser key: configured (credential store)');
+    expect(saved.out).toContain('Street View server key: configured (Maps browser key fallback)');
+    expect(saved.out.join('\n')).not.toContain(SYNTHETIC.MAPS_BROWSER_KEY);
+
+    const devOnly = await harness([], {}, { '.env.development.local': `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=${SYNTHETIC.MAPS_BROWSER_KEY}\n` });
+    await runAuth(['status'], devOnly.io);
+    const text = devOnly.out.join('\n');
+    expect(text).toMatch(/Settings for next start[^]*Maps browser key: not configured/);
+    expect(text).toMatch(/Differences under next dev[^]*Maps browser key: configured \(environment\)/);
+    expect(text).not.toContain(SYNTHETIC.MAPS_BROWSER_KEY);
+  });
+
   it('refuses empty and placeholder values', async () => {
     const h = await harness(['   ', 'your_gemini_api_key_here']);
     expect(await runAuth(['set', 'gemini'], h.io)).toBe(1);

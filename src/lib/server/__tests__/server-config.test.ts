@@ -129,15 +129,44 @@ describe('resolveServerConfig precedence', () => {
     expect(config.credentials.mapsServerKey).toBeUndefined();
   });
 
-  it('uses the public Maps key only as the last resort for Street View', () => {
-    const fallback = resolveServerConfig({ NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: 'public' }, store());
-    expect(fallback.credentials.mapsServerKey).toEqual({ value: 'public', source: 'public-environment' });
+  it('resolves the Maps browser key from the environment, then the store', () => {
+    const fromEnv = resolveServerConfig(
+      { NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: 'env-browser' },
+      store({ credentials: { mapsBrowserKey: 'store-browser' } })
+    );
+    expect(fromEnv.credentials.mapsBrowserKey).toEqual({ value: 'env-browser', source: 'environment' });
+
+    const fromStore = resolveServerConfig({}, store({ credentials: { mapsBrowserKey: 'store-browser' } }));
+    expect(fromStore.credentials.mapsBrowserKey).toEqual({ value: 'store-browser', source: 'store' });
+
+    for (const placeholder of ['', '   ', 'your_google_maps_api_key_here']) {
+      const config = resolveServerConfig(
+        { NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: placeholder },
+        store({ credentials: { mapsBrowserKey: 'store-browser' } })
+      );
+      expect(config.credentials.mapsBrowserKey).toEqual({ value: 'store-browser', source: 'store' });
+    }
+    expect(resolveServerConfig({ NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: 'your_google_maps_api_key_here' }, store()).credentials).toEqual({});
+  });
+
+  it('ignores a saved Maps browser key when the store is unreadable', () => {
+    const config = resolveServerConfig({}, store({ credentials: { mapsBrowserKey: 'store-browser' } }, 'invalid'));
+    expect(config.credentials.mapsBrowserKey).toBeUndefined();
+  });
+
+  it('uses the Maps browser key only as the last resort for Street View', () => {
+    const envFallback = resolveServerConfig({ NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: 'public' }, store());
+    expect(envFallback.credentials.mapsServerKey).toEqual({ value: 'public', source: 'browser-key' });
+
+    const storeFallback = resolveServerConfig({}, store({ credentials: { mapsBrowserKey: 'stored-public' } }));
+    expect(storeFallback.credentials.mapsServerKey).toEqual({ value: 'stored-public', source: 'browser-key' });
 
     const stored = resolveServerConfig(
       { NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: 'public' },
       store({ credentials: { mapsServerKey: 'server' } })
     );
-    expect(stored.credentials.mapsServerKey?.source).toBe('store');
+    expect(stored.credentials.mapsServerKey).toEqual({ value: 'server', source: 'store' });
+    expect(stored.credentials.mapsBrowserKey).toEqual({ value: 'public', source: 'environment' });
   });
 
   it('defaults to local mode when nothing is configured', () => {
@@ -234,11 +263,20 @@ describe('describeServerConfig', () => {
     expect(text).toContain('Gemini API key: configured (environment)');
     expect(text).toContain('Street View server key: configured (credential store)');
     expect(text).toContain('OpenAI API key: not configured');
+    expect(text).toContain('Maps browser key: not configured');
     expect(text).toContain('Training mode: open (environment)');
     expect(text).toContain('Trusted proxy hops: 0');
     for (const secret of [SYNTHETIC.GEMINI_KEY, SYNTHETIC.MAPS_SERVER_KEY, SYNTHETIC.ACCESS_CODE, normalizeAccessCode(SYNTHETIC.ACCESS_CODE)]) {
       expect(text).not.toContain(secret);
     }
+  });
+
+  it('reports the Maps browser key and the server key fallback without values', () => {
+    const config = resolveServerConfig({}, store({ credentials: { mapsBrowserKey: SYNTHETIC.MAPS_BROWSER_KEY } }));
+    const text = describeServerConfig(config).join('\n');
+    expect(text).toContain('Maps browser key: configured (credential store)');
+    expect(text).toContain('Street View server key: configured (Maps browser key fallback)');
+    expect(text).not.toContain(SYNTHETIC.MAPS_BROWSER_KEY);
   });
 });
 
