@@ -75,9 +75,10 @@ image was taken.
 
 ## Requirements
 
-- **A Node.js 22 release with current security fixes.**
-  The `openai` SDK requires Node 22 and `npm run auth` uses Node's built-in TypeScript type stripping.
-  Developed with Node 22.15.0 and npm 11; that development version is not a security recommendation.
+- **Node.js 22 or later, on a release with current security fixes**
+  ([Node.js security releases](https://nodejs.org/en/blog/vulnerability)). The `openai` SDK requires Node 22, and
+  `npm run auth` uses Node's built-in TypeScript type stripping. Developed and tested with Node 26.13.0 and npm 11;
+  that version is not a security recommendation.
 - **A Google Maps Platform project** with billing enabled and these APIs:
   - Maps JavaScript API, for the browser map and panoramas;
   - Street View Static API, for scene analysis.
@@ -435,8 +436,8 @@ its fixed dev domain. A tunnel puts the server on your laptop on the public inte
 
 ### Once
 
-1. Use a Node.js 22 release with current security fixes and dependencies with current Next.js security releases.
-   See [Requirements](#requirements) and [Known limitations](#known-limitations).
+1. Use Node.js 22 or later on a release with current security fixes, and dependencies with current Next.js
+   security releases. See [Requirements](#requirements) and [Known limitations](#known-limitations).
 2. Install ngrok on Windows:
    - from the Microsoft Store, which ngrok recommends;
    - or with `winget install ngrok -s msstore`;
