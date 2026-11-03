@@ -553,6 +553,8 @@ could run AI analyses on your keys without a code.
 ## Development
 
 ```sh
+npm run lint          # ESLint 9 with the Next.js rules
+npx eslint src/lib/google-maps.ts        # selected files
 npm run typecheck     # tsc --noEmit
 npm test              # all tests (Vitest)
 npm test -- src/lib/server/__tests__/catalog.test.ts src/app/api/__tests__/ai-analysis.test.ts   # selected files
@@ -564,8 +566,9 @@ npm test -- src/lib/server/__tests__/catalog.test.ts src/app/api/__tests__/ai-an
 - Passing tests do not show that live provider calls, model output quality or imagery availability work.
 - Run the test files that cover what you changed: for example, `src/lib/server/__tests__/` for server modules and
   `src/app/api/__tests__/` for routes.
-- `npm run lint` currently runs `next lint`, but ESLint is not a project dependency, so there is no working lint
-  setup yet. `npm run typecheck` and the tests are the available checks.
+- `npm run lint` runs `eslint .` with `eslint.config.mjs`: the `next/core-web-vitals` and `next/typescript` rules
+  from `eslint-config-next`, loaded through `FlatCompat`. Build output, `node_modules` and generated files are
+  ignored. `next build` also runs these rules.
 - Project layout:
   - `src/app` holds pages and API routes;
   - `src/lib/server` holds server-only modules (configuration, training access, catalog, provider adapters);
@@ -584,4 +587,4 @@ npm test -- src/lib/server/__tests__/catalog.test.ts src/app/api/__tests__/ai-an
 - The pages have no model picker yet. They use the catalog default (see [Providers and models](#providers-and-models)).
 - Model behavior has not been verified against the live APIs, including structured output, error bodies, output
   token headroom for reasoning and image token cost.
-- There is no CI and no working lint setup.
+- There is no CI.
