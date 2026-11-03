@@ -133,6 +133,23 @@ describe('auth command', () => {
     expect((await stored(h)).training.mode).toBe('off');
   });
 
+  it('saves a new attempt-limit reset marker on unlock and keeps the other training settings', async () => {
+    const h = await harness();
+    await runAuth(['training', 'rotate'], h.io);
+    await runAuth(['training', 'open'], h.io);
+    const before = await stored(h);
+
+    expect(await runAuth(['training', 'unlock'], h.io)).toBe(0);
+    const first = await stored(h);
+    expect(first.training).toMatchObject({ mode: 'open', accessCode: before.training.accessCode });
+    expect(new Date(first.training.attemptsResetAt as string).toISOString()).toBe(first.training.attemptsResetAt);
+    expect(h.out.join('\n')).toContain('Existing sessions keep working');
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await runAuth(['training', 'unlock'], h.io);
+    expect((await stored(h)).training.attemptsResetAt).not.toBe(first.training.attemptsResetAt);
+  });
+
   it('does not overwrite a store it cannot parse', async () => {
     const h = await harness([SYNTHETIC.GEMINI_KEY]);
     await fs.mkdir(path.dirname(h.storePath), { recursive: true });

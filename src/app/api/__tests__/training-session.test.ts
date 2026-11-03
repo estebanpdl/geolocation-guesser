@@ -1,8 +1,9 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DELETE, GET, POST } from '../training/session/route';
-import { resetTrainingAccessState, SESSION_COOKIE } from '@/lib/server/training-access';
-import { getRequest, jsonRequest, sessionCookieFrom, SYNTHETIC } from '@/test/fakes';
+import { ATTEMPT_LIMITS, resetTrainingAccessState, SESSION_COOKIE } from '@/lib/server/training-access';
+import { getRequest, jsonRequest, makeScratchDir, sessionCookieFrom, SYNTHETIC, useSyntheticStore } from '@/test/fakes';
+import { runAuth, type AuthIO } from '../../../../scripts/auth.ts';
 
 function enter(code: unknown, options: Parameters<typeof jsonRequest>[2] = {}) {
   return POST(jsonRequest('/api/training/session', { code }, options));
@@ -51,10 +52,40 @@ describe('/api/training/session', () => {
   });
 
   it('answers repeated wrong codes with 429 and Retry-After', async () => {
-    for (let i = 0; i < 5; i++) expect((await enter('WRONG-GUESS-1234')).status).toBe(401);
+    for (let i = 0; i < ATTEMPT_LIMITS.CLIENT_BURST; i++) expect((await enter('WRONG-GUESS-1234')).status).toBe(401);
     const throttled = await enter(SYNTHETIC.ACCESS_CODE);
     expect(throttled.status).toBe(429);
     expect(Number(throttled.headers.get('retry-after'))).toBeGreaterThan(0);
+  });
+
+  it('keys attempts on the address a trusted proxy appended', async () => {
+    vi.stubEnv('TRUSTED_PROXY_HOPS', '1');
+    const via = (spoof: string, real: string) => ({ headers: { 'x-forwarded-for': `${spoof}, ${real}` } });
+    for (let i = 0; i < ATTEMPT_LIMITS.CLIENT_BURST; i++) {
+      expect((await enter('WRONG-GUESS-1234', via(`192.0.2.${i}`, '203.0.113.7'))).status).toBe(401);
+    }
+    expect((await enter(SYNTHETIC.ACCESS_CODE, via('192.0.2.250', '203.0.113.7'))).status).toBe(429);
+    expect((await enter(SYNTHETIC.ACCESS_CODE, via('192.0.2.250', '198.51.100.2'))).status).toBe(200);
+  });
+
+  it('lets the operator clear a lockout with `auth training unlock`, without a restart', async () => {
+    const storePath = await useSyntheticStore({});
+    const out: string[] = [];
+    const io: AuthIO = {
+      env: { GEOLOCATION_GUESSER_CREDENTIALS_FILE: storePath },
+      projectDir: await makeScratchDir('project-'),
+      out: (line) => out.push(line),
+      err: (line) => out.push(line),
+      readSecret: async () => '',
+    };
+    const session = sessionCookieFrom(await enter(SYNTHETIC.ACCESS_CODE, { headers: { 'x-forwarded-for': '198.51.100.2' } }));
+    for (let i = 0; i < ATTEMPT_LIMITS.CLIENT_BURST; i++) await enter('WRONG-GUESS-1234');
+    expect((await enter(SYNTHETIC.ACCESS_CODE)).status).toBe(429);
+
+    expect(await runAuth(['training', 'unlock'], io)).toBe(0);
+    expect(out.join('\n')).toContain('Cleared the wrong-code limits');
+    expect((await enter(SYNTHETIC.ACCESS_CODE)).status).toBe(200);
+    expect(await status(session)).toMatchObject({ active: true });
   });
 
   it('reports each training state', async () => {
