@@ -17,7 +17,8 @@ const STORE_VERSION = 1;
 const MAX_VALUE_LENGTH = 512;
 const MAX_STORE_BYTES = 64 * 1024;
 
-export const CREDENTIAL_FIELDS = ['geminiApiKey', 'openaiApiKey', 'mapsServerKey'] as const;
+/** `mapsBrowserKey` is the public Maps JavaScript key; the other fields never leave the server. */
+export const CREDENTIAL_FIELDS = ['geminiApiKey', 'openaiApiKey', 'mapsServerKey', 'mapsBrowserKey'] as const;
 export type CredentialField = (typeof CREDENTIAL_FIELDS)[number];
 
 export const TRAINING_MODES = ['off', 'open', 'closed'] as const;

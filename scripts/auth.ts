@@ -50,6 +50,7 @@ const CREDENTIAL_NAMES: Record<string, { field: CredentialField; label: string }
   gemini: { field: 'geminiApiKey', label: 'Gemini API key' },
   openai: { field: 'openaiApiKey', label: 'OpenAI API key' },
   'maps-server': { field: 'mapsServerKey', label: 'Street View server key' },
+  'maps-browser': { field: 'mapsBrowserKey', label: 'Maps browser key' },
 };
 
 const USAGE = `Usage: npm run auth -- <command>
@@ -57,10 +58,10 @@ const USAGE = `Usage: npm run auth -- <command>
 Commands:
   status                        Show which settings are configured (values are never shown)
   path                          Show the credential store location
-  set <gemini|openai|maps-server>
-                                Save a server credential (masked prompt)
-  remove <gemini|openai|maps-server>
-                                Delete a saved server credential
+  set <gemini|openai|maps-server|maps-browser>
+                                Save a credential (masked prompt)
+  remove <gemini|openai|maps-server|maps-browser>
+                                Delete a saved credential
   training code                 Save a training access code (masked prompt)
   training rotate               Generate and save a new access code; it is shown once
   training open                 Require the access code for AI analysis
@@ -75,7 +76,10 @@ Environment variables, from this shell or the project's .env files, override sav
 ${Object.values(CREDENTIAL_ENV).join(', ')}, ${TRAINING_ENV.MODE}, ${TRAINING_ENV.ACCESS_CODE}.
 A saved "closed" training mode overrides ${TRAINING_ENV.MODE}. Training changes that an
 environment value would override are refused. Changes apply to a running server on its next
-request. Rotating the code ends existing training sessions and also clears the wrong-code limits.`;
+request. Rotating the code ends existing training sessions and also clears the wrong-code limits.
+
+The Maps browser key is public by design: the server sends it to every visitor's browser.
+Restrict it to your site's HTTP referrers and the Maps JavaScript API.`;
 
 export async function runAuth(args: string[], io: AuthIO): Promise<number> {
   const [command = 'status', subject, ...rest] = args;

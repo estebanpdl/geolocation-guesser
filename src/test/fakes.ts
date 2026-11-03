@@ -11,6 +11,7 @@ import type { StoreData } from '@/lib/server/credential-store';
 export const SYNTHETIC = {
   GEMINI_KEY: 'synthetic-gemini-key-0000',
   MAPS_SERVER_KEY: 'synthetic-maps-server-key-0000',
+  MAPS_BROWSER_KEY: 'synthetic-maps-browser-key-0000',
   OPENAI_KEY: 'synthetic-openai-key-0000',
   ACCESS_CODE: 'TEST-CODE-ABCD-2345',
   PARTICIPANT_GEMINI_KEY_A: 'synthetic-participant-a-gemini-1111',

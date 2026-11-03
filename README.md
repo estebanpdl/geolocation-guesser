@@ -75,9 +75,10 @@ image was taken.
 
 ## Requirements
 
-- **A Node.js 22 release with current security fixes.**
-  The `openai` SDK requires Node 22 and `npm run auth` uses Node's built-in TypeScript type stripping.
-  Developed with Node 22.15.0 and npm 11; that development version is not a security recommendation.
+- **Node.js 22 or later, on a release with current security fixes**
+  ([Node.js security releases](https://nodejs.org/en/blog/vulnerability)). The `openai` SDK requires Node 22, and
+  `npm run auth` uses Node's built-in TypeScript type stripping. Developed and tested with Node 26.13.0 and npm 11;
+  that version is not a security recommendation.
 - **A Google Maps Platform project** with billing enabled and these APIs:
   - Maps JavaScript API, for the browser map and panoramas;
   - Street View Static API, for scene analysis.
@@ -108,7 +109,7 @@ Then fill in the values you need. Placeholder values from the template count as 
 
 | Variable | Where it is used | Notes |
 |---|---|---|
-| `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` | Browser | **Public by design.** It is embedded in the page at build time. |
+| `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` | Browser | **Public by design.** The server reads it at runtime and sends it to every page that shows a map. Not needed at build time. |
 | `GOOGLE_MAPS_API_KEY` | Server | Street View Static images for scene analysis. |
 | `GOOGLE_GENERATIVE_AI_KEY` | Server | Gemini API key. |
 | `OPENAI_API_KEY` | Server | OpenAI API key. |
@@ -120,8 +121,9 @@ Then fill in the values you need. Placeholder values from the template count as 
 
 Use two Google keys:
 
-- **The browser key** (`NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`) ships to every visitor. In Google Cloud, restrict it to
-  your site's HTTP referrers and to the Maps JavaScript API only.
+- **The browser key** (`NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`, or `npm run auth -- set maps-browser`) ships to every
+  visitor: the server sends it with each page that shows a map, without a training session. In Google Cloud,
+  restrict it to your site's HTTP referrers and to the Maps JavaScript API only.
 - **The server key** (`GOOGLE_MAPS_API_KEY`) never reaches the browser. Restrict it to the Street View Static API
   and, if your host has a fixed address, to that IP. If it is unset, the server falls back to the browser key. That
   works, but it means a key exposed in every page also has Static API access.
@@ -129,32 +131,32 @@ Use two Google keys:
 The Gemini and OpenAI keys are server-only. They are never sent to the browser, included in responses or written to
 logs.
 
-Instead of putting server keys in `.env.local`, you can save them outside the repository with
-[`npm run auth`](#server-credentials-npm-run-auth). The browser key must stay in the environment, because it is
-needed at build time.
+Instead of putting keys in `.env.local`, you can save them outside the repository with
+[`npm run auth`](#server-credentials-npm-run-auth), the browser key included. The server reads every key at runtime,
+so none of them is needed at build time.
 
 ## Running
 
 | Command | What it does |
 |---|---|
 | `npm run dev` | Development server at <http://localhost:3000>. |
-| `npm run build` | Production build. Set `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` first: it is embedded at this step. |
+| `npm run build` | Production build. It needs no keys: the browser key is read when pages load, not embedded at build time. |
 | `npm run start` | Serves the production build (`next start`, port 3000 by default; `npm run start -- -p 8080` to change it). |
 | `npm run start:tunnel` | Serves the production build on `127.0.0.1` only, for use behind a tunnel on the same machine. |
 
 Settings saved with `npm run auth` reach a running server on its next request. Changes to `.env*` files take effect
-when the server restarts. Neither needs a rebuild, except the browser key.
+when the server restarts. Neither needs a rebuild.
 
 ## Server credentials: `npm run auth`
 
-`npm run auth` manages the server's own credentials and training settings. Run it as the user account that runs
-the server, in the project directory.
+`npm run auth` manages the server's credentials, including the public Maps browser key, and its training settings.
+Run it as the user account that runs the server, in the project directory.
 
 ```sh
 npm run auth                          # same as: npm run auth -- status
 npm run auth -- status                # which settings are configured, and where from (values are never shown)
 npm run auth -- path                  # where the credential store is
-npm run auth -- set gemini            # save a key at a masked prompt: gemini | openai | maps-server
+npm run auth -- set gemini            # save a key at a masked prompt: gemini | openai | maps-server | maps-browser
 npm run auth -- remove openai         # delete a saved key
 npm run auth -- training open         # require the access code for AI analysis
 npm run auth -- training close        # block AI analysis for everyone
@@ -165,7 +167,11 @@ npm run auth -- training unlock       # clear the wrong-code limits; sessions ke
 npm run auth -- help
 ```
 
-`maps-server` is the Street View Static server key.
+`maps-server` is the Street View Static server key. `maps-browser` is the Maps JavaScript browser key: it is public
+by design, and `status` reports it as `Maps browser key: configured (credential store)` or `not configured`. If the
+map shows that the browser key is not configured, set it in one of three ways: `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` in
+the server environment or `.env.local` (then restart the server), or `npm run auth -- set maps-browser` (then reload
+the page).
 
 ### Where it saves settings
 
@@ -361,7 +367,7 @@ the value in use.
 
 ### Running a public session
 
-1. Configure server keys (`npm run auth -- set gemini`, and so on) and build with your restricted browser key.
+1. Configure the keys (`npm run auth -- set gemini`, `npm run auth -- set maps-browser` and so on) and build.
 2. `npm run auth -- training rotate`, and note the code.
 3. `npm run auth -- training open`.
 4. Run **one** `npm run start` process behind an HTTPS reverse proxy. The proxy should set `X-Forwarded-Proto`. If
@@ -430,8 +436,8 @@ its fixed dev domain. A tunnel puts the server on your laptop on the public inte
 
 ### Once
 
-1. Use a Node.js 22 release with current security fixes and dependencies with current Next.js security releases.
-   See [Requirements](#requirements) and [Known limitations](#known-limitations).
+1. Use Node.js 22 or later on a release with current security fixes, and dependencies with current Next.js
+   security releases. See [Requirements](#requirements) and [Known limitations](#known-limitations).
 2. Install ngrok on Windows:
    - from the Microsoft Store, which ngrok recommends;
    - or with `winget install ngrok -s msstore`;
@@ -461,13 +467,14 @@ its fixed dev domain. A tunnel puts the server on your laptop on the public inte
 
 ### Before each workshop
 
-1. `npm run build`, with the browser key set.
+1. `npm run build`. The browser key is read at runtime, so it only needs to be configured before you start.
 2. `npm run auth -- training rotate`, and note the code. It is shown only once. Use a generated code rather than one
    you make up: with about 79 bits, it cannot realistically be guessed within the
    [code attempt limits](#code-attempts).
 3. `npm run auth -- training open`.
 4. Plug the laptop in and turn off sleep. Sleep suspends both the server and the tunnel.
-5. `npm run auth -- status` should show training `open`, an access code configured and `Trusted proxy hops: 1`.
+5. `npm run auth -- status` should show training `open`, an access code and the Maps browser key configured, and
+   `Trusted proxy hops: 1`.
 
 ### Start
 
@@ -547,6 +554,8 @@ could run AI analyses on your keys without a code.
 ## Development
 
 ```sh
+npm run lint          # ESLint 9 with the Next.js rules
+npx eslint src/lib/google-maps.ts        # selected files
 npm run typecheck     # tsc --noEmit
 npm test              # all tests (Vitest)
 npm test -- src/lib/server/__tests__/catalog.test.ts src/app/api/__tests__/ai-analysis.test.ts   # selected files
@@ -558,8 +567,9 @@ npm test -- src/lib/server/__tests__/catalog.test.ts src/app/api/__tests__/ai-an
 - Passing tests do not show that live provider calls, model output quality or imagery availability work.
 - Run the test files that cover what you changed: for example, `src/lib/server/__tests__/` for server modules and
   `src/app/api/__tests__/` for routes.
-- `npm run lint` currently runs `next lint`, but ESLint is not a project dependency, so there is no working lint
-  setup yet. `npm run typecheck` and the tests are the available checks.
+- `npm run lint` runs `eslint .` with `eslint.config.mjs`: the `next/core-web-vitals` and `next/typescript` rules
+  from `eslint-config-next`, loaded through `FlatCompat`. Build output, `node_modules` and generated files are
+  ignored. `next build` also runs these rules.
 - Project layout:
   - `src/app` holds pages and API routes;
   - `src/lib/server` holds server-only modules (configuration, training access, catalog, provider adapters);
@@ -578,4 +588,4 @@ npm test -- src/lib/server/__tests__/catalog.test.ts src/app/api/__tests__/ai-an
 - The pages have no model picker yet. They use the catalog default (see [Providers and models](#providers-and-models)).
 - Model behavior has not been verified against the live APIs, including structured output, error bodies, output
   token headroom for reasoning and image token cost.
-- There is no CI and no working lint setup.
+- There is no CI.
